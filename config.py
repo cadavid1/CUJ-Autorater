@@ -53,20 +53,7 @@ MODELS = {
         "best_for": "Testing latest features, real-time capabilities",
         "supports_video": True,
     },
-    "gemini-1.5-pro": {
-        "display_name": "Gemini 1.5 Pro (Legacy)",
-        "cost_per_m_tokens_input": 0.35,
-        "cost_per_m_tokens_output": 1.05,
-        "best_for": "Backward compatibility",
-        "supports_video": True,
-    },
-    "gemini-1.5-flash": {
-        "display_name": "Gemini 1.5 Flash (Legacy)",
-        "cost_per_m_tokens_input": 0.15,
-        "cost_per_m_tokens_output": 0.60,
-        "best_for": "Backward compatibility, fast processing",
-        "supports_video": True,
-    },
+
 }
 
 # Default model
