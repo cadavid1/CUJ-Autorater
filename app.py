@@ -8,7 +8,7 @@ from pathlib import Path
 # Import new modules
 from config import (
     MODELS, DEFAULT_MODEL, get_model_list, get_model_info,
-    estimate_cost, format_cost, DEFAULT_SYSTEM_PROMPT
+    estimate_cost, format_cost, DEFAULT_SYSTEM_PROMPT, DRIVE_ENABLED
 )
 from video_processor import (
     validate_and_process_video, delete_video_file,
@@ -19,6 +19,17 @@ from storage import get_db
 from logger import (log_video_upload, log_analysis_start,
                     log_analysis_complete, log_analysis_error, log_export)
 
+# Google Drive integration (optional)
+try:
+    from drive_client import (
+        DriveClient, DriveAPIError, is_drive_authenticated,
+        get_drive_client, handle_drive_oauth_callback, logout_drive
+    )
+    DRIVE_AVAILABLE = DRIVE_ENABLED
+except ImportError:
+    DRIVE_AVAILABLE = False
+    print("Google Drive integration not available. Install google-api-python-client to enable.")
+
 # --- CONFIGURATION & STATE ---
 st.set_page_config(page_title="UXR Mate", page_icon="🧪", layout="wide")
 
@@ -27,6 +38,10 @@ ensure_video_directory()
 
 # Initialize database
 db = get_db()
+
+# Handle Drive OAuth callback if Drive is available
+if DRIVE_AVAILABLE:
+    handle_drive_oauth_callback()
 
 SAMPLE_CUJS = [
     {"id": "CUJ-001", "task": "Sign Up", "expectation": "User finds the 'Sign Up' button on the homepage and completes the email form without validation errors."},
@@ -105,6 +120,16 @@ if st.session_state.api_key:
 else:
     st.sidebar.warning("No API Key")
 
+# Drive status
+if DRIVE_AVAILABLE:
+    if is_drive_authenticated():
+        st.sidebar.success("📁 Drive Connected")
+        if st.sidebar.button("Logout from Drive"):
+            logout_drive()
+            st.rerun()
+    else:
+        st.sidebar.info("📁 Drive Not Connected")
+
 # --- PAGE: SYSTEM SETUP ---
 
 if page == "System Setup":
@@ -159,10 +184,33 @@ if page == "System Setup":
 
     with st.expander("System Prompt", expanded=True):
         st.session_state.system_prompt = st.text_area(
-            "Analysis Instruction", 
+            "Analysis Instruction",
             value=st.session_state.system_prompt,
             height=200
         )
+
+    # Google Drive OAuth
+    if DRIVE_AVAILABLE:
+        with st.expander("Google Drive Integration (Optional)", expanded=False):
+            st.markdown("Connect to Google Drive to import videos and export results.")
+
+            if is_drive_authenticated():
+                st.success("✅ Connected to Google Drive")
+                st.caption("You can now import videos from Drive and export results to Drive.")
+
+                if st.button("Disconnect from Drive"):
+                    logout_drive()
+                    st.rerun()
+            else:
+                st.info("Sign in to access your Google Drive files")
+
+                try:
+                    _, auth_url = DriveClient.get_auth_url()
+                    st.markdown(f"### [🔐 Sign in with Google]({auth_url})")
+                    st.caption("You'll be redirected to Google to authorize UXR Mate")
+                except Exception as e:
+                    st.error(f"Drive configuration error: {e}")
+                    st.caption("Make sure you've configured Drive OAuth in `.streamlit/secrets.toml`")
 
 # --- PAGE: CUJ DATA SOURCE ---
 
@@ -223,101 +271,215 @@ elif page == "CUJ Data Source":
 elif page == "Video Assets":
     st.header("📹 Video Assets")
 
-    st.info("💡 Upload real video files to analyze with Gemini. Videos will be validated and stored locally.")
+    # Create tabs for local upload and Drive import
+    if DRIVE_AVAILABLE and is_drive_authenticated():
+        tab1, tab2 = st.tabs(["📤 Local Upload", "📁 Import from Drive"])
+    else:
+        tab1 = st.container()
+        tab2 = None
 
-    # File Uploader
-    uploaded_files = st.file_uploader(
-        "Upload Videos",
-        accept_multiple_files=True,
-        type=['mp4', 'mov', 'avi', 'webm'],
-        help="Upload video files (max 100MB, up to 5 minutes)"
-    )
+    with tab1:
+        st.info("💡 Upload real video files to analyze with Gemini. Videos will be validated and stored locally.")
 
-    if uploaded_files:
-        # Track processed files in session state to avoid duplicates
-        if "processed_files" not in st.session_state:
-            st.session_state.processed_files = set()
+        # File Uploader
+        uploaded_files = st.file_uploader(
+            "Upload Videos",
+            accept_multiple_files=True,
+            type=['mp4', 'mov', 'avi', 'webm'],
+            help="Upload video files (max 900MB, up to 90 minutes)"
+        )
 
-        progress_container = st.container()
-        files_to_process = []
+        if uploaded_files:
+            # Track processed files in session state to avoid duplicates
+            if "processed_files" not in st.session_state:
+                st.session_state.processed_files = set()
 
-        # Check which files are new
-        for uploaded_file in uploaded_files:
-            # Create unique identifier for file
-            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
-            if file_id not in st.session_state.processed_files:
-                files_to_process.append((uploaded_file, file_id))
+            progress_container = st.container()
+            files_to_process = []
 
-        if files_to_process:
-            with progress_container:
-                for uploaded_file, file_id in files_to_process:
-                    with st.spinner(f"Processing {uploaded_file.name}..."):
-                        # Validate and process video
-                        result = validate_and_process_video(uploaded_file)
+            # Check which files are new
+            for uploaded_file in uploaded_files:
+                # Create unique identifier for file
+                file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+                if file_id not in st.session_state.processed_files:
+                    files_to_process.append((uploaded_file, file_id))
 
-                    if result["valid"]:
-                        # Save to database first
-                        video_id = db.save_video(
-                            name=uploaded_file.name,
-                            file_path=result["file_path"],
-                            duration_seconds=result["metadata"].get("duration_seconds"),
-                            file_size_mb=result["metadata"].get("file_size_mb"),
-                            resolution=result["metadata"]["resolution"],
-                            description=f"Duration: {format_duration(result['metadata']['duration_seconds'])}, Resolution: {result['metadata']['resolution']}"
-                        )
+            if files_to_process:
+                with progress_container:
+                    for uploaded_file, file_id in files_to_process:
+                        with st.spinner(f"Processing {uploaded_file.name}..."):
+                            # Validate and process video
+                            result = validate_and_process_video(uploaded_file)
 
-                        # Add to videos dataframe
-                        new_entry = {
-                            "id": video_id,
-                            "name": uploaded_file.name,
-                            "status": "Ready",
-                            "file_path": result["file_path"],
-                            "duration": result["metadata"].get("duration_seconds"),
-                            "size_mb": result["metadata"].get("file_size_mb"),
-                            "description": f"Duration: {format_duration(result['metadata']['duration_seconds'])}, Resolution: {result['metadata']['resolution']}"
-                        }
+                        if result["valid"]:
+                            # Save to database first
+                            video_id = db.save_video(
+                                name=uploaded_file.name,
+                                file_path=result["file_path"],
+                                duration_seconds=result["metadata"].get("duration_seconds"),
+                                file_size_mb=result["metadata"].get("file_size_mb"),
+                                resolution=result["metadata"]["resolution"],
+                                description=f"Duration: {format_duration(result['metadata']['duration_seconds'])}, Resolution: {result['metadata']['resolution']}"
+                            )
 
-                        new_df = pd.DataFrame([new_entry])
-                        st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
+                            # Add to videos dataframe
+                            new_entry = {
+                                "id": video_id,
+                                "name": uploaded_file.name,
+                                "status": "Ready",
+                                "file_path": result["file_path"],
+                                "duration": result["metadata"].get("duration_seconds"),
+                                "size_mb": result["metadata"].get("file_size_mb"),
+                                "description": f"Duration: {format_duration(result['metadata']['duration_seconds'])}, Resolution: {result['metadata']['resolution']}"
+                            }
 
-                        # Log upload
-                        log_video_upload(
-                            uploaded_file.name,
-                            result["metadata"].get("file_size_mb"),
-                            result["metadata"].get("duration_seconds")
-                        )
+                            new_df = pd.DataFrame([new_entry])
+                            st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
 
-                        # Show success with metadata
-                        st.success(f"✅ {uploaded_file.name} uploaded successfully!")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Duration", format_duration(result["metadata"]["duration_seconds"]))
-                        with col2:
-                            st.metric("Size", f"{result['metadata']['file_size_mb']:.1f} MB")
-                        with col3:
-                            st.metric("Resolution", result["metadata"]["resolution"])
+                            # Log upload
+                            log_video_upload(
+                                uploaded_file.name,
+                                result["metadata"].get("file_size_mb"),
+                                result["metadata"].get("duration_seconds")
+                            )
 
-                        # Show cost estimate
-                        cost_info = estimate_cost(
-                            result["metadata"]["duration_seconds"],
-                            st.session_state.selected_model
-                        )
-                        st.caption(f"📊 Estimated analysis cost: {format_cost(cost_info['total_cost'])} using {cost_info['model_display_name']}")
+                            # Show success with metadata
+                            st.success(f"✅ {uploaded_file.name} uploaded successfully!")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Duration", format_duration(result["metadata"]["duration_seconds"]))
+                            with col2:
+                                st.metric("Size", f"{result['metadata']['file_size_mb']:.1f} MB")
+                            with col3:
+                                st.metric("Resolution", result["metadata"]["resolution"])
 
-                        # Mark as processed
-                        st.session_state.processed_files.add(file_id)
+                            # Show cost estimate
+                            cost_info = estimate_cost(
+                                result["metadata"]["duration_seconds"],
+                                st.session_state.selected_model
+                            )
+                            st.caption(f"📊 Estimated analysis cost: {format_cost(cost_info['total_cost'])} using {cost_info['model_display_name']}")
+
+                            # Mark as processed
+                            st.session_state.processed_files.add(file_id)
+
+                        else:
+                            # Show errors
+                            st.error(f"❌ Failed to process {uploaded_file.name}")
+                            for error in result["errors"]:
+                                st.error(f"  • {error}")
+                            # Mark as processed even if failed
+                            st.session_state.processed_files.add(file_id)
+
+                    # Rerun to update UI
+                    time.sleep(1)
+                    st.rerun()
+
+    # Drive Import Tab
+    if tab2:
+        with tab2:
+            st.info("📁 Browse and import videos from your Google Drive")
+
+            drive_client = get_drive_client()
+            if drive_client:
+                try:
+                    # List video files from Drive
+                    with st.spinner("Loading videos from Drive..."):
+                        video_files = drive_client.list_video_files(page_size=50)
+
+                    if video_files:
+                        st.success(f"Found {len(video_files)} video(s) in your Drive")
+
+                        # Display videos with import button
+                        for file in video_files:
+                            with st.expander(f"📹 {file['name']}", expanded=False):
+                                col1, col2, col3 = st.columns([2, 1, 1])
+
+                                with col1:
+                                    size_mb = int(file.get('size', 0)) / (1024*1024)
+                                    st.caption(f"**Size:** {size_mb:.1f} MB")
+                                    modified = file.get('modifiedTime', 'Unknown')[:10]
+                                    st.caption(f"**Modified:** {modified}")
+
+                                with col2:
+                                    if st.button("View in Drive", key=f"view_{file['id']}", use_container_width=True):
+                                        st.write(f"[Open]({file.get('webViewLink', '#')})")
+
+                                with col3:
+                                    if st.button("Import", key=f"import_{file['id']}", type="primary", use_container_width=True):
+                                        try:
+                                            # Create destination path
+                                            from config import DRIVE_VIDEO_STORAGE_PATH
+                                            Path(DRIVE_VIDEO_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
+                                            dest_path = Path(DRIVE_VIDEO_STORAGE_PATH) / file['name']
+
+                                            # Download with progress
+                                            progress_bar = st.progress(0)
+                                            status_text = st.empty()
+
+                                            def update_progress(percent):
+                                                progress_bar.progress(percent / 100)
+                                                status_text.text(f"Downloading: {percent}%")
+
+                                            drive_client.download_file(
+                                                file['id'],
+                                                str(dest_path),
+                                                progress_callback=update_progress
+                                            )
+
+                                            progress_bar.progress(100)
+                                            status_text.text("Extracting metadata...")
+
+                                            # Extract video metadata
+                                            from video_processor import extract_video_metadata
+                                            metadata = extract_video_metadata(str(dest_path))
+
+                                            # Save to database
+                                            video_id = db.save_drive_video(
+                                                name=file['name'],
+                                                drive_file_id=file['id'],
+                                                drive_web_link=file.get('webViewLink', ''),
+                                                file_path=str(dest_path),
+                                                duration_seconds=metadata['duration_seconds'],
+                                                file_size_mb=size_mb,
+                                                resolution=metadata['resolution'],
+                                                description=f"Imported from Drive - Duration: {format_duration(metadata['duration_seconds'])}, Resolution: {metadata['resolution']}"
+                                            )
+
+                                            # Add to session state
+                                            new_entry = {
+                                                "id": video_id,
+                                                "name": file['name'],
+                                                "status": "Ready",
+                                                "file_path": str(dest_path),
+                                                "duration": metadata['duration_seconds'],
+                                                "size_mb": size_mb,
+                                                "description": f"From Drive - {format_duration(metadata['duration_seconds'])}, {metadata['resolution']}"
+                                            }
+
+                                            new_df = pd.DataFrame([new_entry])
+                                            st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
+
+                                            # Log import
+                                            log_video_upload(file['name'], size_mb, metadata['duration_seconds'])
+
+                                            st.success(f"✅ Imported {file['name']} from Drive!")
+                                            time.sleep(1)
+                                            st.rerun()
+
+                                        except Exception as e:
+                                            st.error(f"Import failed: {str(e)}")
 
                     else:
-                        # Show errors
-                        st.error(f"❌ Failed to process {uploaded_file.name}")
-                        for error in result["errors"]:
-                            st.error(f"  • {error}")
-                        # Mark as processed even if failed
-                        st.session_state.processed_files.add(file_id)
+                        st.info("No videos found in your Drive. Upload videos to Drive first.")
 
-                # Rerun to update UI
-                time.sleep(1)
-                st.rerun()
+                except DriveAPIError as e:
+                    st.error(f"Drive error: {e}")
+                    st.caption("Try refreshing the page or reconnecting to Drive.")
+                except Exception as e:
+                    st.error(f"Unexpected error: {e}")
+            else:
+                st.error("Failed to connect to Drive. Please check your connection in System Setup.")
 
     st.markdown("### Manage Videos")
     st.caption("Upload videos above, then manage them in the table below. Delete videos you no longer need to save space.")

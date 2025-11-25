@@ -54,6 +54,9 @@ class DatabaseManager:
                 name TEXT NOT NULL,
                 file_path TEXT,
                 drive_id TEXT,
+                drive_file_id TEXT,
+                drive_web_link TEXT,
+                source TEXT DEFAULT 'local',
                 status TEXT DEFAULT 'ready',
                 description TEXT,
                 duration_seconds REAL,
@@ -170,8 +173,8 @@ class DatabaseManager:
 
             cursor.execute("""
                 INSERT INTO videos (name, file_path, status, description,
-                                  duration_seconds, file_size_mb, resolution)
-                VALUES (?, ?, 'ready', ?, ?, ?, ?)
+                                  duration_seconds, file_size_mb, resolution, source)
+                VALUES (?, ?, 'ready', ?, ?, ?, ?, 'local')
             """, (name, file_path, description, duration_seconds, file_size_mb, resolution))
 
             video_id = cursor.lastrowid
@@ -180,6 +183,30 @@ class DatabaseManager:
             return video_id
         except Exception as e:
             print(f"Error saving video: {e}")
+            return -1
+
+    def save_drive_video(self, name: str, drive_file_id: str, drive_web_link: str,
+                        file_path: str, duration_seconds: float, file_size_mb: float,
+                        resolution: str = "", description: str = "") -> int:
+        """Save Drive video metadata and return video ID"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO videos (name, file_path, drive_file_id, drive_web_link,
+                                  source, status, description, duration_seconds,
+                                  file_size_mb, resolution)
+                VALUES (?, ?, ?, ?, 'drive', 'ready', ?, ?, ?, ?)
+            """, (name, file_path, drive_file_id, drive_web_link, description,
+                  duration_seconds, file_size_mb, resolution))
+
+            video_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return video_id
+        except Exception as e:
+            print(f"Error saving Drive video: {e}")
             return -1
 
     def get_videos(self) -> pd.DataFrame:

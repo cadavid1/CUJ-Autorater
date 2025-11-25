@@ -5,13 +5,14 @@ An intelligent tool for analyzing user session videos against Critical User Jour
 ## Features
 
 - 🎥 **Real Video Analysis**: Upload and analyze actual user session videos with Gemini AI
+- 📁 **Google Drive Integration**: Import videos directly from Drive, export results to Drive
 - 📋 **CUJ Management**: Define and manage Critical User Journeys
 - 🤖 **AI-Powered Insights**: Get automated friction scoring and recommendations
 - 💰 **Cost Tracking**: See estimated and actual API costs for each analysis
 - 📊 **Results Dashboard**: View comprehensive analysis results with executive reports
 - ✨ **Latest Gemini Models**: Uses the newest Gemini 2.5 Flash-Lite and other cutting-edge models
 
-## Latest Updates (Sprints 1-4 Complete!)
+## Latest Updates (Sprints 1-5 Complete!)
 
 ### Sprint 1: Foundation ✅
 - 🎥 **Real Video Processing**: Upload videos (mp4, mov, avi, webm) up to 900MB and 90 minutes
@@ -39,12 +40,21 @@ An intelligent tool for analyzing user session videos against Critical User Jour
 - 🔍 **Activity Tracking**: All uploads, analyses, and exports logged automatically
 - 📂 **Log Management**: Daily log files in `data/logs/` directory
 
+### Sprint 5: Google Drive Integration ✅
+- 🔐 **OAuth 2.0 Authentication**: Secure Google Drive connection with token management
+- 📁 **Drive File Browser**: Browse and import videos directly from your Google Drive
+- ⬇️ **Video Import**: Download videos from Drive with progress tracking (up to 900MB)
+- ⬆️ **Result Export**: Export analysis results directly to your Google Drive
+- 💾 **Local Caching**: Drive videos cached locally for fast re-analysis
+- 🔄 **Seamless Integration**: Tabbed interface for local uploads and Drive imports
+
 ## Requirements
 
 - Python 3.8+
 - Google Gemini API Key ([Get one here](https://makersuite.google.com/app/apikey))
 - OpenCV for video processing
 - Streamlit for the web interface
+- **Optional**: Google Cloud OAuth credentials for Drive integration ([Setup guide](https://console.cloud.google.com/))
 
 ## Installation
 
@@ -66,6 +76,17 @@ pip install -r requirements.txt
    GEMINI_API_KEY = "your-api-key-here"
    ```
 
+4. **Optional: Set up Google Drive** (if you want Drive integration):
+   - Copy the template: `cp .streamlit/secrets.toml.template .streamlit/secrets.toml`
+   - Add your Google Cloud OAuth credentials to `.streamlit/secrets.toml`:
+   ```toml
+   [google_drive]
+   client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
+   client_secret = "YOUR_CLIENT_SECRET"
+   redirect_uri = "http://localhost:8501"
+   ```
+   - See [SPRINT5_IMPLEMENTATION.md](SPRINT5_IMPLEMENTATION.md) for detailed setup instructions
+
 ## Usage
 
 1. **Start the application:**
@@ -85,7 +106,8 @@ streamlit run app.py
 
 4. **Upload Videos**:
    - Go to "Video Assets" page
-   - Upload user session videos (mp4, mov, avi, webm)
+   - **Option A**: Upload from local files (mp4, mov, avi, webm)
+   - **Option B**: Import from Google Drive (if connected)
    - Videos are automatically validated and stored locally
    - See cost estimates for each video
 
@@ -128,16 +150,25 @@ For longer videos (e.g., 30 minutes):
 
 ```
 CUJ-Autorater/
-├── app.py                    # Main Streamlit application
-├── config.py                 # Configuration & model settings
-├── gemini_client.py          # Gemini API wrapper
-├── video_processor.py        # Video validation & processing
-├── requirements.txt          # Python dependencies
-├── README.md                 # This file
-├── .gitignore               # Git ignore rules
-└── data/                     # Created automatically
-    ├── videos/              # Uploaded videos
-    └── uxr_mate.db         # Database (coming in Sprint 2)
+├── app.py                       # Main Streamlit application
+├── config.py                    # Configuration & model settings
+├── storage.py                   # Database layer (SQLite)
+├── gemini_client.py             # Gemini API wrapper
+├── video_processor.py           # Video validation & processing
+├── drive_client.py              # Google Drive API client (NEW!)
+├── logger.py                    # Logging system
+├── requirements.txt             # Python dependencies
+├── README.md                    # This file
+├── SPRINT5_IMPLEMENTATION.md    # Drive integration guide (NEW!)
+├── .gitignore                  # Git ignore rules
+├── .streamlit/
+│   └── secrets.toml.template   # OAuth config template (NEW!)
+└── data/                        # Created automatically
+    ├── videos/                 # Local video uploads
+    ├── drive_videos/           # Cached Drive videos (NEW!)
+    ├── exports/                # Exported results
+    ├── logs/                   # Application logs
+    └── uxr_mate.db             # SQLite database
 ```
 
 ## Configuration
@@ -176,7 +207,7 @@ Edit `config.py` to adjust:
 
 ## Roadmap
 
-### ✅ Sprint 1-4: COMPLETED!
+### ✅ Sprint 1-5: COMPLETED!
 - ✅ Real video upload and analysis
 - ✅ Latest Gemini models (2.5 Flash-Lite, 2.5 Flash, 2.0 Flash Experimental)
 - ✅ Progress tracking with multi-stage indicators
@@ -188,12 +219,7 @@ Edit `config.py` to adjust:
 - ✅ Export to CSV/JSON
 - ✅ Statistics dashboard
 - ✅ Comprehensive error logging
-
-### 🔮 Sprint 5: Google Drive (Reach Goal - Future)
-- OAuth integration
-- Drive file browser
-- Video import from Drive
-- Result export to Drive
+- ✅ **Google Drive Integration**: OAuth, file browser, video import, result export
 
 ### 🎯 Future Enhancements
 - Unit tests and integration tests

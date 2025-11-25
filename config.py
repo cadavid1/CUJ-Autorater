@@ -68,6 +68,10 @@ DATABASE_PATH = "./data/uxr_mate.db"
 VIDEO_STORAGE_PATH = "./data/videos/"
 EXPORT_STORAGE_PATH = "./data/exports/"
 
+# Google Drive configuration
+DRIVE_VIDEO_STORAGE_PATH = "./data/drive_videos/"  # Local cache for Drive videos
+DRIVE_ENABLED = True  # Feature flag for Drive integration
+
 # Default system prompt
 DEFAULT_SYSTEM_PROMPT = """You are an expert UX Researcher. Your job is to evaluate user sessions against Critical User Journeys (CUJs).
 You will be provided with a CUJ definition and a video of the user's behavior in a session.
