@@ -190,8 +190,30 @@ class DatabaseManager:
     def bulk_save_cujs(self, cujs_df: pd.DataFrame) -> bool:
         """Bulk save CUJs from DataFrame"""
         try:
+            saved_count = 0
+            skipped_count = 0
+
             for _, row in cujs_df.iterrows():
-                self.save_cuj(row['id'], row['task'], row['expectation'])
+                # Validate required fields are not None, NaN, or empty
+                cuj_id = row.get('id')
+                task = row.get('task')
+                expectation = row.get('expectation')
+
+                # Check if any required field is None, NaN, or empty string
+                if pd.isna(cuj_id) or pd.isna(task) or pd.isna(expectation):
+                    skipped_count += 1
+                    continue
+
+                if not str(cuj_id).strip() or not str(task).strip() or not str(expectation).strip():
+                    skipped_count += 1
+                    continue
+
+                self.save_cuj(str(cuj_id).strip(), str(task).strip(), str(expectation).strip())
+                saved_count += 1
+
+            if skipped_count > 0:
+                print(f"Skipped {skipped_count} CUJ(s) with missing required fields (id, task, or expectation)")
+
             return True
         except Exception as e:
             print(f"Error bulk saving CUJs: {e}")

@@ -4,11 +4,18 @@ Configuration and constants for UXR CUJ Analysis application
 
 # Model configurations
 MODELS = {
-    "gemini-2.5-flash-lite": {
-        "display_name": "Gemini 2.5 Flash-Lite (Recommended - Fastest & Cheapest)",
-        "cost_per_m_tokens_input": 0.10,
-        "cost_per_m_tokens_output": 0.40,
-        "best_for": "High-volume, cost-sensitive tasks",
+    "gemini-3-pro-preview": {
+        "display_name": "Gemini 3 Pro Preview (Most Advanced)",
+        "cost_per_m_tokens_input": 2.00,
+        "cost_per_m_tokens_output": 12.00,
+        "best_for": "State-of-the-art reasoning, complex multimodal analysis",
+        "supports_video": True,
+    },
+    "gemini-2.5-pro": {
+        "display_name": "Gemini 2.5 Pro (Recommended - Best Reasoning)",
+        "cost_per_m_tokens_input": 1.25,
+        "cost_per_m_tokens_output": 10.00,
+        "best_for": "Complex reasoning, detailed video analysis",
         "supports_video": True,
     },
     "gemini-2.5-flash": {
@@ -16,6 +23,27 @@ MODELS = {
         "cost_per_m_tokens_input": 0.30,
         "cost_per_m_tokens_output": 2.50,
         "best_for": "Complex reasoning, detailed analysis",
+        "supports_video": True,
+    },
+    "gemini-2.5-flash-lite": {
+        "display_name": "Gemini 2.5 Flash-Lite (Fastest & Cheapest)",
+        "cost_per_m_tokens_input": 0.10,
+        "cost_per_m_tokens_output": 0.40,
+        "best_for": "High-volume, cost-sensitive tasks",
+        "supports_video": True,
+    },
+    "gemini-2.0-flash": {
+        "display_name": "Gemini 2.0 Flash (Stable)",
+        "cost_per_m_tokens_input": 0.10,
+        "cost_per_m_tokens_output": 0.40,
+        "best_for": "Fast, cost-effective video analysis",
+        "supports_video": True,
+    },
+    "gemini-2.0-flash-lite": {
+        "display_name": "Gemini 2.0 Flash-Lite (Ultra Budget)",
+        "cost_per_m_tokens_input": 0.075,
+        "cost_per_m_tokens_output": 0.30,
+        "best_for": "Maximum cost efficiency",
         "supports_video": True,
     },
     "gemini-2.0-flash-exp": {
@@ -42,7 +70,7 @@ MODELS = {
 }
 
 # Default model
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_MODEL = "gemini-2.5-pro"
 
 # Video constraints
 MAX_VIDEO_SIZE_MB = 900

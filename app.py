@@ -85,8 +85,9 @@ if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = DEFAULT_SYSTEM_PROMPT
 
 if "selected_model" not in st.session_state:
-    # Load from database settings
-    saved_model = db.get_setting("selected_model", DEFAULT_MODEL)
+    # Load from database settings - check for custom default first, then fall back to DEFAULT_MODEL
+    user_default = db.get_setting("default_model", DEFAULT_MODEL)
+    saved_model = db.get_setting("selected_model", user_default)
     st.session_state.selected_model = saved_model
 
 if "db_synced" not in st.session_state:
@@ -182,6 +183,23 @@ if page == "System Setup":
             else:
                 st.caption("**Cost:** Free during preview")
 
+        # Default model preference
+        st.markdown("---")
+        current_default = db.get_setting("default_model", DEFAULT_MODEL)
+        current_default_info = get_model_info(current_default)
+
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.caption(f"**Current Default:** {current_default_info['display_name']}")
+        with col2:
+            if st.session_state.selected_model != current_default:
+                if st.button("Set as Default", key="set_default_btn"):
+                    db.save_setting("default_model", st.session_state.selected_model)
+                    st.success(f"Default model updated to {model_info['display_name']}")
+                    st.rerun()
+            else:
+                st.caption("✓ This is default")
+
     with st.expander("System Prompt", expanded=True):
         st.session_state.system_prompt = st.text_area(
             "Analysis Instruction",
@@ -266,8 +284,24 @@ elif page == "CUJ Data Source":
         )
         # Save changes back to session state and database
         if not edited_df.equals(st.session_state.cujs):
-            st.session_state.cujs = edited_df
-            db.bulk_save_cujs(edited_df)
+            # Filter out rows with missing required fields before saving
+            valid_rows = edited_df[
+                edited_df['id'].notna() &
+                edited_df['task'].notna() &
+                edited_df['expectation'].notna() &
+                (edited_df['id'].astype(str).str.strip() != '') &
+                (edited_df['task'].astype(str).str.strip() != '') &
+                (edited_df['expectation'].astype(str).str.strip() != '')
+            ]
+
+            # Show warning if any rows were invalid
+            invalid_count = len(edited_df) - len(valid_rows)
+            if invalid_count > 0:
+                st.warning(f"⚠️ Skipped {invalid_count} row(s) with missing required fields (ID, Task, or Expectation)")
+
+            # Update session state with valid rows only
+            st.session_state.cujs = valid_rows.reset_index(drop=True)
+            db.bulk_save_cujs(valid_rows)
 
 # --- PAGE: VIDEO ASSETS ---
 
