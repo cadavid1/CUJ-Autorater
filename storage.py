@@ -75,11 +75,18 @@ class DatabaseManager:
                 model_used TEXT NOT NULL,
                 status TEXT,
                 friction_score INTEGER,
+                confidence_score INTEGER,
                 observation TEXT,
                 recommendation TEXT,
+                key_moments TEXT,
                 cost REAL,
                 raw_response TEXT,
+                human_verified BOOLEAN DEFAULT 0,
+                human_override_status TEXT,
+                human_override_friction INTEGER,
+                human_notes TEXT,
                 analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                verified_at TIMESTAMP,
                 FOREIGN KEY (cuj_id) REFERENCES cujs(id),
                 FOREIGN KEY (video_id) REFERENCES videos(id)
             )
@@ -105,8 +112,36 @@ class DatabaseManager:
             )
         """)
 
+        # Migration: Add new columns to existing databases
+        self._migrate_analysis_results_table(cursor)
+
         conn.commit()
         conn.close()
+
+    def _migrate_analysis_results_table(self, cursor):
+        """Add new columns to analysis_results table if they don't exist"""
+        # Get existing columns
+        cursor.execute("PRAGMA table_info(analysis_results)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Add missing columns
+        migrations = [
+            ("confidence_score", "ALTER TABLE analysis_results ADD COLUMN confidence_score INTEGER"),
+            ("key_moments", "ALTER TABLE analysis_results ADD COLUMN key_moments TEXT"),
+            ("human_verified", "ALTER TABLE analysis_results ADD COLUMN human_verified BOOLEAN DEFAULT 0"),
+            ("human_override_status", "ALTER TABLE analysis_results ADD COLUMN human_override_status TEXT"),
+            ("human_override_friction", "ALTER TABLE analysis_results ADD COLUMN human_override_friction INTEGER"),
+            ("human_notes", "ALTER TABLE analysis_results ADD COLUMN human_notes TEXT"),
+            ("verified_at", "ALTER TABLE analysis_results ADD COLUMN verified_at TIMESTAMP")
+        ]
+
+        for column_name, migration_sql in migrations:
+            if column_name not in existing_columns:
+                try:
+                    cursor.execute(migration_sql)
+                    print(f"Added column: {column_name}")
+                except Exception as e:
+                    print(f"Migration warning for {column_name}: {e}")
 
     # === CUJ Operations ===
 
@@ -258,7 +293,8 @@ class DatabaseManager:
     def save_analysis(self, cuj_id: str, video_id: int, model_used: str,
                      status: str, friction_score: int, observation: str,
                      recommendation: str, cost: float = 0.0,
-                     raw_response: str = "") -> int:
+                     raw_response: str = "", confidence_score: int = None,
+                     key_moments: str = None) -> int:
         """Save analysis result and return analysis ID"""
         try:
             conn = self._get_connection()
@@ -266,11 +302,11 @@ class DatabaseManager:
 
             cursor.execute("""
                 INSERT INTO analysis_results
-                (cuj_id, video_id, model_used, status, friction_score,
-                 observation, recommendation, cost, raw_response)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (cuj_id, video_id, model_used, status, friction_score,
-                  observation, recommendation, cost, raw_response))
+                (cuj_id, video_id, model_used, status, friction_score, confidence_score,
+                 observation, recommendation, key_moments, cost, raw_response)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (cuj_id, video_id, model_used, status, friction_score, confidence_score,
+                  observation, recommendation, key_moments, cost, raw_response))
 
             analysis_id = cursor.lastrowid
             conn.commit()
@@ -294,10 +330,17 @@ class DatabaseManager:
                 ar.model_used,
                 ar.status,
                 ar.friction_score,
+                ar.confidence_score,
                 ar.observation,
                 ar.recommendation,
+                ar.key_moments,
                 ar.cost,
-                ar.analyzed_at
+                ar.human_verified,
+                ar.human_override_status,
+                ar.human_override_friction,
+                ar.human_notes,
+                ar.analyzed_at,
+                ar.verified_at
             FROM analysis_results ar
             JOIN cujs c ON ar.cuj_id = c.id
             JOIN videos v ON ar.video_id = v.id
@@ -319,15 +362,23 @@ class DatabaseManager:
         # Get most recent analysis for each CUJ
         cursor.execute("""
             SELECT
+                ar.id,
                 ar.cuj_id,
                 ar.video_id,
                 v.name as video_name,
+                v.file_path as video_path,
                 ar.model_used,
                 ar.status,
                 ar.friction_score,
+                ar.confidence_score,
                 ar.observation,
                 ar.recommendation,
-                ar.cost
+                ar.key_moments,
+                ar.cost,
+                ar.human_verified,
+                ar.human_override_status,
+                ar.human_override_friction,
+                ar.human_notes
             FROM analysis_results ar
             JOIN videos v ON ar.video_id = v.id
             WHERE ar.id IN (
@@ -340,14 +391,22 @@ class DatabaseManager:
         results = {}
         for row in cursor.fetchall():
             results[row['cuj_id']] = {
+                'analysis_id': row['id'],
                 'video_used': row['video_name'],
                 'video_id': row['video_id'],
+                'video_path': row['video_path'],
                 'model_used': row['model_used'],
                 'status': row['status'],
                 'friction_score': row['friction_score'],
+                'confidence_score': row['confidence_score'],
                 'observation': row['observation'],
                 'recommendation': row['recommendation'],
-                'cost': row['cost']
+                'key_moments': row['key_moments'],
+                'cost': row['cost'],
+                'human_verified': row['human_verified'],
+                'human_override_status': row['human_override_status'],
+                'human_override_friction': row['human_override_friction'],
+                'human_notes': row['human_notes']
             }
 
         conn.close()
@@ -369,6 +428,41 @@ class DatabaseManager:
             return True
         except Exception as e:
             print(f"Error deleting analysis results: {e}")
+            return False
+
+    def verify_analysis(self, analysis_id: int, override_status: str = None,
+                       override_friction: int = None, notes: str = "") -> bool:
+        """
+        Mark an analysis as human-verified with optional overrides
+
+        Args:
+            analysis_id: ID of the analysis to verify
+            override_status: Optional human override for status (Pass/Fail/Partial)
+            override_friction: Optional human override for friction score (1-5)
+            notes: Human notes about the verification
+
+        Returns:
+            True if successful
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE analysis_results
+                SET human_verified = 1,
+                    human_override_status = ?,
+                    human_override_friction = ?,
+                    human_notes = ?,
+                    verified_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (override_status, override_friction, notes, analysis_id))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error verifying analysis: {e}")
             return False
 
     # === Export Operations ===

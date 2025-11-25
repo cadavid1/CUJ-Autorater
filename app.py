@@ -243,7 +243,10 @@ elif page == "CUJ Data Source":
                         if new_data:
                             # Append new data
                             new_df = pd.DataFrame(new_data)
-                            st.session_state.cujs = pd.concat([st.session_state.cujs, new_df], ignore_index=True)
+                            if st.session_state.cujs.empty:
+                                st.session_state.cujs = new_df
+                            else:
+                                st.session_state.cujs = pd.concat([st.session_state.cujs, new_df], ignore_index=True)
                             # Save to database
                             db.bulk_save_cujs(new_df)
                             st.rerun()
@@ -334,7 +337,10 @@ elif page == "Video Assets":
                             }
 
                             new_df = pd.DataFrame([new_entry])
-                            st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
+                            if st.session_state.videos.empty:
+                                st.session_state.videos = new_df
+                            else:
+                                st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
 
                             # Log upload
                             log_video_upload(
@@ -458,7 +464,10 @@ elif page == "Video Assets":
                                             }
 
                                             new_df = pd.DataFrame([new_entry])
-                                            st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
+                                            if st.session_state.videos.empty:
+                                                st.session_state.videos = new_df
+                                            else:
+                                                st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
 
                                             # Log import
                                             log_video_upload(file['name'], size_mb, metadata['duration_seconds'])
@@ -734,6 +743,18 @@ elif page == "Analysis Dashboard":
                             analysis['cost'] = cost_info['total_cost']
                             total_cost += cost_info['total_cost']
 
+                            # Extract new fields with defaults for backwards compatibility
+                            confidence_score = analysis.get('confidence_score')
+                            key_moments = analysis.get('key_moments')
+                            # Always convert key_moments list to JSON string for database storage
+                            if key_moments:
+                                if isinstance(key_moments, list):
+                                    key_moments = json.dumps(key_moments)
+                                elif not isinstance(key_moments, str):
+                                    key_moments = json.dumps([key_moments])
+                            else:
+                                key_moments = None
+
                             # Save to database
                             db.save_analysis(
                                 cuj_id=cuj['id'],
@@ -744,7 +765,9 @@ elif page == "Analysis Dashboard":
                                 observation=analysis['observation'],
                                 recommendation=analysis.get('recommendation', ''),
                                 cost=cost_info['total_cost'],
-                                raw_response=json.dumps(analysis)
+                                raw_response=json.dumps(analysis),
+                                confidence_score=confidence_score,
+                                key_moments=key_moments
                             )
 
                             results_buffer[cuj['id']] = analysis
@@ -849,6 +872,9 @@ elif page == "Analysis Dashboard":
                 report_prompt = f"""
                 Write an executive summary markdown report based on these results:
                 {json.dumps(st.session_state.results, indent=2)}
+
+                IMPORTANT: When mentioning costs, use "USD" instead of "$" symbol to avoid rendering issues.
+                For example, write "0.29 USD" instead of "$0.29".
                 """
                 report = call_gemini(
                     st.session_state.api_key,
@@ -867,13 +893,37 @@ elif page == "Analysis Dashboard":
             # Find CUJ name for header
             cuj_row = st.session_state.cujs[st.session_state.cujs['id'] == cuj_id].iloc[0]
 
-            color = "green" if res['status'] == "Pass" else "red" if res['status'] == "Fail" else "orange"
+            # Determine effective status and friction (human override takes precedence)
+            effective_status = res.get('human_override_status') or res['status']
+            effective_friction = res.get('human_override_friction') or res['friction_score']
+            is_verified = res.get('human_verified', False)
 
-            with st.expander(f"[{res['status']}] {cuj_row['task']} (Friction: {res['friction_score']}/5)"):
+            # Build header with verification indicator
+            header = f"[{effective_status}] {cuj_row['task']} (Friction: {effective_friction}/5)"
+            if is_verified:
+                header = f"✅ {header}"
+
+            with st.expander(header, expanded=not is_verified):
+                # Show confidence warning if low
+                if res.get('confidence_score') and res['confidence_score'] < 3:
+                    st.warning(f"⚠️ Low AI Confidence Score: {res['confidence_score']}/5 - Review recommended!")
+
+                # Verification status banner
+                if is_verified:
+                    st.success("✓ Human Verified")
+                    if res.get('human_notes'):
+                        st.info(f"**Reviewer Notes:** {res['human_notes']}")
+
                 c1, c2 = st.columns([1, 2])
+
                 with c1:
                     st.markdown(f"**Video:** `{res['video_used']}`")
-                    st.markdown(f"**Friction Score:** {res['friction_score']}/5")
+                    st.markdown(f"**AI Friction Score:** {res['friction_score']}/5")
+
+                    # Show confidence score
+                    if res.get('confidence_score'):
+                        confidence_emoji = "🟢" if res['confidence_score'] >= 4 else "🟡" if res['confidence_score'] == 3 else "🔴"
+                        st.markdown(f"**AI Confidence:** {confidence_emoji} {res['confidence_score']}/5")
 
                     # Show model and cost if available
                     if 'model_used' in res:
@@ -883,12 +933,93 @@ elif page == "Analysis Dashboard":
                     if 'cost' in res:
                         st.caption(f"**Cost:** {format_cost(res['cost'])}")
 
-                    if 'recommendation' in res:
-                        st.info(f"💡 {res['recommendation']}")
+                    # Show video player if video exists
+                    if res.get('video_path') and Path(res['video_path']).exists():
+                        st.markdown("---")
+                        st.markdown("**🎥 Review Video:**")
+                        with open(res['video_path'], 'rb') as video_file:
+                            video_bytes = video_file.read()
+                            st.video(video_bytes)
 
                 with c2:
                     st.markdown(f"**Observation:** {res['observation']}")
+
+                    # Show key moments if available
+                    if res.get('key_moments'):
+                        try:
+                            moments = json.loads(res['key_moments']) if isinstance(res['key_moments'], str) else res['key_moments']
+                            if moments:
+                                st.markdown("**📍 Key Moments:**")
+                                for moment in moments:
+                                    st.caption(f"• {moment}")
+                        except:
+                            pass
+
+                    if 'recommendation' in res and res['recommendation']:
+                        st.info(f"💡 **Recommendation:** {res['recommendation']}")
+
                     st.caption(f"CUJ ID: {cuj_id}")
+
+                # Human Verification Section
+                if not is_verified:
+                    st.markdown("---")
+                    st.markdown("### 👤 Human Verification")
+
+                    with st.form(key=f"verify_form_{cuj_id}"):
+                        col_verify1, col_verify2, col_verify3 = st.columns(3)
+
+                        with col_verify1:
+                            override_status = st.selectbox(
+                                "Override Status?",
+                                ["Keep AI", "Pass", "Fail", "Partial"],
+                                key=f"status_{cuj_id}"
+                            )
+
+                        with col_verify2:
+                            override_friction = st.selectbox(
+                                "Override Friction?",
+                                ["Keep AI", "1", "2", "3", "4", "5"],
+                                key=f"friction_{cuj_id}"
+                            )
+
+                        with col_verify3:
+                            st.markdown("")  # Spacing
+
+                        notes = st.text_area(
+                            "Reviewer Notes",
+                            placeholder="What did you actually observe in the video?",
+                            key=f"notes_{cuj_id}"
+                        )
+
+                        if st.form_submit_button("✓ Mark as Verified", type="primary"):
+                            # Prepare overrides
+                            final_status = None if override_status == "Keep AI" else override_status
+                            final_friction = None if override_friction == "Keep AI" else int(override_friction)
+
+                            # Save verification
+                            if 'analysis_id' in res:
+                                success = db.verify_analysis(
+                                    res['analysis_id'],
+                                    override_status=final_status,
+                                    override_friction=final_friction,
+                                    notes=notes
+                                )
+
+                                if success:
+                                    st.success("✅ Verification saved!")
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to save verification")
+                else:
+                    # Show override info if present
+                    if res.get('human_override_status') or res.get('human_override_friction'):
+                        st.markdown("---")
+                        st.markdown("### 👤 Human Overrides Applied")
+                        if res.get('human_override_status'):
+                            st.caption(f"**Status Override:** {res['status']} → {res['human_override_status']}")
+                        if res.get('human_override_friction'):
+                            st.caption(f"**Friction Override:** {res['friction_score']} → {res['human_override_friction']}")
 
     else:
         st.info("No analysis results yet. Click 'Run Analysis' to start.")
