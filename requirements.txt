@@ -2,7 +2,7 @@ streamlit
 pandas
 google-generativeai
 google-genai
-opencv-python
+opencv-python-headless
 pillow
 google-api-python-client>=2.110.0
 google-auth>=2.25.0
