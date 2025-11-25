@@ -111,6 +111,7 @@ def call_gemini(api_key, model_name, prompt, system_instruction, response_mime_t
 
 st.sidebar.title("🧪 UXR CUJ Analysis")
 st.sidebar.markdown("Powered by Gemini")
+st.sidebar.warning("⚠️ This application is currently under development and not private. Don't test with any production data (run locally for privacy). Ask David Pearl if unsure how to get this deployed.")
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio("Navigation", ["System Setup", "CUJ Data Source", "Video Assets", "Analysis Dashboard"])
