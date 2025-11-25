@@ -1,5 +1,5 @@
 """
-Google Drive API client for UXR Mate
+Google Drive API client for UXR CUJ Analysis
 Handles OAuth authentication and Drive operations
 """
 

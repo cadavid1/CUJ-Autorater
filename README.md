@@ -1,4 +1,4 @@
-# UXR Mate - AI-Powered UX Research Analysis Tool
+# UXR CUJ Analysis - AI-Powered UX Research Analysis Tool
 
 An intelligent tool for analyzing user session videos against Critical User Journeys (CUJs) using Google's Gemini AI models.
 

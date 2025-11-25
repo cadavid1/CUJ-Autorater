@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to UXR Mate will be documented in this file.
+All notable changes to UXR CUJ Analysis will be documented in this file.
 
 ## [2.0.0] - 2024-11-24
 

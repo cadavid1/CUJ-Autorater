@@ -1,5 +1,5 @@
 """
-Logging utilities for UXR Mate
+Logging utilities for UXR CUJ Analysis
 """
 
 import logging

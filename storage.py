@@ -1,5 +1,5 @@
 """
-Database storage layer for UXR Mate
+Database storage layer for UXR CUJ Analysis
 Handles persistent storage of CUJs, videos, and analysis results
 """
 

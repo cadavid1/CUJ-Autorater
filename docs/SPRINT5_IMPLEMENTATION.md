@@ -174,7 +174,7 @@ if tab2:
 if DRIVE_AVAILABLE and is_drive_authenticated():
     col_exp3 = st.columns(3)[-1]
     with col_exp3:
-        if st.button("Drive", use_container_width=True):
+        if st.button("Drive", width='stretch'):
             try:
                 # Export to local file first
                 filepath = db.export_results_to_csv()

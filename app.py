@@ -31,7 +31,7 @@ except ImportError:
     print("Google Drive integration not available. Install google-api-python-client to enable.")
 
 # --- CONFIGURATION & STATE ---
-st.set_page_config(page_title="UXR Mate", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="UXR CUJ Analysis", page_icon="🧪", layout="wide")
 
 # Ensure data directories exist
 ensure_video_directory()
@@ -108,7 +108,7 @@ def call_gemini(api_key, model_name, prompt, system_instruction, response_mime_t
 
 # --- SIDEBAR NAVIGATION ---
 
-st.sidebar.title("🧪 UXR Mate")
+st.sidebar.title("🧪 UXR CUJ Analysis")
 st.sidebar.markdown("Powered by Gemini")
 st.sidebar.markdown("---")
 
@@ -207,7 +207,7 @@ if page == "System Setup":
                 try:
                     _, auth_url = DriveClient.get_auth_url()
                     st.markdown(f"### [🔐 Sign in with Google]({auth_url})")
-                    st.caption("You'll be redirected to Google to authorize UXR Mate")
+                    st.caption("You'll be redirected to Google to authorize UXR CUJ Analysis")
                 except Exception as e:
                     st.error(f"Drive configuration error: {e}")
                     st.caption("Make sure you've configured Drive OAuth in `.streamlit/secrets.toml`")
@@ -254,7 +254,7 @@ elif page == "CUJ Data Source":
         edited_df = st.data_editor(
             st.session_state.cujs,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "id": "ID",
                 "task": "Task Name",
@@ -402,11 +402,11 @@ elif page == "Video Assets":
                                     st.caption(f"**Modified:** {modified}")
 
                                 with col2:
-                                    if st.button("View in Drive", key=f"view_{file['id']}", use_container_width=True):
+                                    if st.button("View in Drive", key=f"view_{file['id']}", width='stretch'):
                                         st.write(f"[Open]({file.get('webViewLink', '#')})")
 
                                 with col3:
-                                    if st.button("Import", key=f"import_{file['id']}", type="primary", use_container_width=True):
+                                    if st.button("Import", key=f"import_{file['id']}", type="primary", width='stretch'):
                                         try:
                                             # Create destination path
                                             from config import DRIVE_VIDEO_STORAGE_PATH
@@ -561,13 +561,13 @@ elif page == "Analysis Dashboard":
 
             col_exp1, col_exp2 = st.columns(2)
             with col_exp1:
-                if st.button("CSV", use_container_width=True):
+                if st.button("CSV", width='stretch'):
                     filepath = db.export_results_to_csv()
                     log_export("CSV", filepath)
                     st.success(f"Exported to:\n`{filepath}`")
 
             with col_exp2:
-                if st.button("JSON", use_container_width=True):
+                if st.button("JSON", width='stretch'):
                     filepath = db.export_results_to_json()
                     log_export("JSON", filepath)
                     st.success(f"Exported to:\n`{filepath}`")
@@ -607,7 +607,7 @@ elif page == "Analysis Dashboard":
                         'cuj_task', 'video_name', 'status', 'friction_score',
                         'model_used', 'cost', 'analyzed_at'
                     ]],
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True
                 )
             else:
@@ -616,7 +616,7 @@ elif page == "Analysis Dashboard":
         st.markdown("---")
 
         # Run Analysis button
-        if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
+        if st.button("▶️ Run Analysis", type="primary", width='stretch'):
             if not st.session_state.api_key:
                 st.error("Missing API Key")
             elif valid_videos.empty:
@@ -813,12 +813,12 @@ elif page == "Analysis Dashboard":
 
             col_keep, col_delete = st.columns(2)
             with col_keep:
-                if st.button("Keep Videos", use_container_width=True):
+                if st.button("Keep Videos", width='stretch'):
                     st.session_state.show_cleanup_dialog = False
                     st.rerun()
 
             with col_delete:
-                if st.button("Delete Analyzed Videos", type="secondary", use_container_width=True):
+                if st.button("Delete Analyzed Videos", type="secondary", width='stretch'):
                     # Delete videos that were analyzed
                     videos_to_delete = valid_videos.to_dict('records')
                     deleted_count = 0

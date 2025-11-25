@@ -1,5 +1,5 @@
 """
-Configuration and constants for UXR Mate application
+Configuration and constants for UXR CUJ Analysis application
 """
 
 # Model configurations
