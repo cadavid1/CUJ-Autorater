@@ -568,7 +568,7 @@ elif page == "Analysis Dashboard":
     # Check if we have videos with valid file paths
     valid_videos = st.session_state.videos[
         st.session_state.videos['file_path'].notna() &
-        (st.session_state.videos['status'] == 'Ready')
+        (st.session_state.videos['status'].str.lower() == 'ready')
     ]
 
     col_actions, col_summary = st.columns([1.2, 3.8])
@@ -940,7 +940,13 @@ elif page == "Analysis Dashboard":
             # Cards
             for cuj_id, res in st.session_state.results.items():
                 # Find CUJ name for header
-                cuj_row = st.session_state.cujs[st.session_state.cujs['id'] == cuj_id].iloc[0]
+                cuj_matches = st.session_state.cujs[st.session_state.cujs['id'] == cuj_id]
+
+                # Skip if CUJ no longer exists
+                if cuj_matches.empty:
+                    continue
+
+                cuj_row = cuj_matches.iloc[0]
 
                 # Determine effective status and friction (human override takes precedence)
                 effective_status = res.get('human_override_status') or res['status']
@@ -1061,6 +1067,15 @@ elif page == "Analysis Dashboard":
                                     )
 
                                     if success:
+                                        # Update session state so the expander auto-collapses on rerun
+                                        st.session_state.results[cuj_id]['human_verified'] = True
+                                        if final_status:
+                                            st.session_state.results[cuj_id]['human_override_status'] = final_status
+                                        if final_friction:
+                                            st.session_state.results[cuj_id]['human_override_friction'] = final_friction
+                                        if notes:
+                                            st.session_state.results[cuj_id]['human_notes'] = notes
+
                                         st.success("✅ Verification saved!")
                                         time.sleep(1)
                                         st.rerun()
