@@ -529,6 +529,7 @@ elif page == "Video Assets":
 
 elif page == "Analysis Dashboard":
     st.header("🚀 Analysis Dashboard")
+    st.markdown("") # Add breathing room
 
     # Check if we have videos with valid file paths
     valid_videos = st.session_state.videos[
@@ -536,7 +537,7 @@ elif page == "Analysis Dashboard":
         (st.session_state.videos['status'] == 'Ready')
     ]
 
-    col_actions, col_summary = st.columns([1, 4])
+    col_actions, col_summary = st.columns([1.2, 3.8])
 
     with col_actions:
         st.markdown("### Actions")
@@ -551,81 +552,10 @@ elif page == "Analysis Dashboard":
         else:
             st.success("✅ Ready to analyze")
 
-        # Statistics
-        stats = db.get_statistics()
-        if stats['total_analyses'] > 0:
-            st.markdown("### 📊 Statistics")
-            st.metric("Total Analyses", stats['total_analyses'])
-            st.metric("Total Cost", format_cost(stats['total_cost']))
-            st.metric("Avg Friction", f"{stats['avg_friction_score']:.1f}/5")
+        st.markdown("")  # Spacing
 
-            if stats['status_counts']:
-                st.caption("**Status Breakdown:**")
-                for status, count in stats['status_counts'].items():
-                    st.caption(f"  • {status}: {count}")
-
-        # Export options
-        if st.session_state.results:
-            st.markdown("### 📥 Export")
-
-            col_exp1, col_exp2 = st.columns(2)
-            with col_exp1:
-                if st.button("CSV", width='stretch'):
-                    filepath = db.export_results_to_csv()
-                    log_export("CSV", filepath)
-                    st.success(f"Exported to:\n`{filepath}`")
-
-            with col_exp2:
-                if st.button("JSON", width='stretch'):
-                    filepath = db.export_results_to_json()
-                    log_export("JSON", filepath)
-                    st.success(f"Exported to:\n`{filepath}`")
-
-        st.markdown("---")
-
-        # Video-CUJ Mapping
-        if not st.session_state.cujs.empty and not valid_videos.empty:
-            with st.expander("🎯 Manual Video-CUJ Mapping", expanded=False):
-                st.caption("Assign specific videos to CUJs (optional)")
-
-                # Initialize mapping in session state
-                if "cuj_video_mapping" not in st.session_state:
-                    st.session_state.cuj_video_mapping = {}
-
-                video_options = valid_videos['name'].tolist()
-                video_dict = dict(zip(valid_videos['name'], valid_videos['id']))
-
-                for _, cuj in st.session_state.cujs.iterrows():
-                    selected_video = st.selectbox(
-                        f"{cuj['task']}",
-                        ["Auto (Round Robin)"] + video_options,
-                        key=f"mapping_{cuj['id']}"
-                    )
-
-                    if selected_video != "Auto (Round Robin)":
-                        st.session_state.cuj_video_mapping[cuj['id']] = video_dict[selected_video]
-                    elif cuj['id'] in st.session_state.cuj_video_mapping:
-                        del st.session_state.cuj_video_mapping[cuj['id']]
-
-        # Analysis History
-        with st.expander("📜 View Analysis History", expanded=False):
-            history_df = db.get_analysis_results(limit=20)
-            if not history_df.empty:
-                st.dataframe(
-                    history_df[[
-                        'cuj_task', 'video_name', 'status', 'friction_score',
-                        'model_used', 'cost', 'analyzed_at'
-                    ]],
-                    width='stretch',
-                    hide_index=True
-                )
-            else:
-                st.info("No analysis history yet. Run your first analysis!")
-
-        st.markdown("---")
-
-        # Run Analysis button
-        if st.button("▶️ Run Analysis", type="primary", width='stretch'):
+        # Run Analysis button (PRIMARY ACTION - at top)
+        if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
             if not st.session_state.api_key:
                 st.error("Missing API Key")
             elif valid_videos.empty:
@@ -836,12 +766,12 @@ elif page == "Analysis Dashboard":
 
             col_keep, col_delete = st.columns(2)
             with col_keep:
-                if st.button("Keep Videos", width='stretch'):
+                if st.button("Keep Videos", use_container_width=True):
                     st.session_state.show_cleanup_dialog = False
                     st.rerun()
 
             with col_delete:
-                if st.button("Delete Analyzed Videos", type="secondary", width='stretch'):
+                if st.button("Delete Analyzed Videos", type="secondary", use_container_width=True):
                     # Delete videos that were analyzed
                     videos_to_delete = valid_videos.to_dict('records')
                     deleted_count = 0
@@ -856,170 +786,261 @@ elif page == "Analysis Dashboard":
                     time.sleep(1)
                     st.rerun()
 
-    # Results Display
-    if st.session_state.results:
-        col_summary_header, col_clear = st.columns([3, 1])
-        with col_summary_header:
-            st.markdown("### Results")
-        with col_clear:
-            if st.button("🗑️ Clear Results", help="Clear all results from display (data is still in database)"):
-                st.session_state.results = {}
-                st.rerun()
-        
-        # Report Generator
-        if st.button("✨ Draft Executive Report"):
-            with st.spinner("Writing report..."):
-                report_prompt = f"""
-                Write an executive summary markdown report based on these results:
-                {json.dumps(st.session_state.results, indent=2)}
+        st.markdown("---")
 
-                IMPORTANT: When mentioning costs, use "USD" instead of "$" symbol to avoid rendering issues.
-                For example, write "0.29 USD" instead of "$0.29".
-                """
-                report = call_gemini(
-                    st.session_state.api_key,
-                    st.session_state.selected_model,
-                    report_prompt,
-                    "You are a Research Lead.",
-                    "text/plain"
+        # Statistics
+        stats = db.get_statistics()
+        if stats['total_analyses'] > 0:
+            with st.expander("📊 Statistics", expanded=True):
+                st.metric("Total Analyses", stats['total_analyses'])
+                st.metric("Total Cost", format_cost(stats['total_cost']))
+                st.metric("Avg Friction", f"{stats['avg_friction_score']:.1f}/5")
+
+                if stats['status_counts']:
+                    st.markdown("")  # Spacing
+                    st.caption("**Status Breakdown:**")
+                    for status, count in stats['status_counts'].items():
+                        st.caption(f"  • {status}: {count}")
+
+        # Export options
+        if st.session_state.results:
+            st.markdown("")  # Spacing
+            with st.expander("📥 Export Results", expanded=False):
+                st.markdown("Export analysis results to file")
+                st.markdown("")  # Spacing
+
+                col_exp1, col_exp2 = st.columns(2)
+                with col_exp1:
+                    if st.button("📄 CSV", use_container_width=True):
+                        filepath = db.export_results_to_csv()
+                        log_export("CSV", filepath)
+                        st.success(f"✓ Exported to CSV")
+                        st.caption(f"`{filepath}`")
+
+                with col_exp2:
+                    if st.button("📋 JSON", use_container_width=True):
+                        filepath = db.export_results_to_json()
+                        log_export("JSON", filepath)
+                        st.success(f"✓ Exported to JSON")
+                        st.caption(f"`{filepath}`")
+
+        st.markdown("---")
+
+        # Video-CUJ Mapping
+        if not st.session_state.cujs.empty and not valid_videos.empty:
+            with st.expander("🎯 Manual Video-CUJ Mapping", expanded=False):
+                st.caption("Assign specific videos to CUJs (optional)")
+
+                # Initialize mapping in session state
+                if "cuj_video_mapping" not in st.session_state:
+                    st.session_state.cuj_video_mapping = {}
+
+                video_options = valid_videos['name'].tolist()
+                video_dict = dict(zip(valid_videos['name'], valid_videos['id']))
+
+                for _, cuj in st.session_state.cujs.iterrows():
+                    selected_video = st.selectbox(
+                        f"{cuj['task']}",
+                        ["Auto (Round Robin)"] + video_options,
+                        key=f"mapping_{cuj['id']}"
+                    )
+
+                    if selected_video != "Auto (Round Robin)":
+                        st.session_state.cuj_video_mapping[cuj['id']] = video_dict[selected_video]
+                    elif cuj['id'] in st.session_state.cuj_video_mapping:
+                        del st.session_state.cuj_video_mapping[cuj['id']]
+
+        # Analysis History
+        with st.expander("📜 View Analysis History", expanded=False):
+            history_df = db.get_analysis_results(limit=20)
+            if not history_df.empty:
+                st.dataframe(
+                    history_df[[
+                        'cuj_task', 'video_name', 'status', 'friction_score',
+                        'model_used', 'cost', 'analyzed_at'
+                    ]],
+                    width='stretch',
+                    hide_index=True
                 )
-                if report:
-                    st.markdown("---")
-                    st.markdown(report)
-                    st.markdown("---")
+            else:
+                st.info("No analysis history yet. Run your first analysis!")
 
-        # Cards
-        for cuj_id, res in st.session_state.results.items():
-            # Find CUJ name for header
-            cuj_row = st.session_state.cujs[st.session_state.cujs['id'] == cuj_id].iloc[0]
+    # Results Display
+    with col_summary:
+        if st.session_state.results:
+            col_summary_header, col_clear = st.columns([3, 1])
+            with col_summary_header:
+                st.markdown("### 📊 Analysis Results")
+            with col_clear:
+                if st.button("🗑️ Clear", help="Clear all results from display (data is still in database)"):
+                    st.session_state.results = {}
+                    st.rerun()
 
-            # Determine effective status and friction (human override takes precedence)
-            effective_status = res.get('human_override_status') or res['status']
-            effective_friction = res.get('human_override_friction') or res['friction_score']
-            is_verified = res.get('human_verified', False)
+            st.markdown("")  # Spacing
 
-            # Build header with verification indicator
-            header = f"[{effective_status}] {cuj_row['task']} (Friction: {effective_friction}/5)"
-            if is_verified:
-                header = f"✅ {header}"
+            # Report Generator
+            if st.button("✨ Draft Executive Report", use_container_width=True):
+                with st.spinner("Writing report..."):
+                    report_prompt = f"""
+                    Write an executive summary markdown report based on these results:
+                    {json.dumps(st.session_state.results, indent=2)}
 
-            with st.expander(header, expanded=not is_verified):
-                # Show confidence warning if low
-                if res.get('confidence_score') and res['confidence_score'] < 3:
-                    st.warning(f"⚠️ Low AI Confidence Score: {res['confidence_score']}/5 - Review recommended!")
-
-                # Verification status banner
-                if is_verified:
-                    st.success("✓ Human Verified")
-                    if res.get('human_notes'):
-                        st.info(f"**Reviewer Notes:** {res['human_notes']}")
-
-                c1, c2 = st.columns([1, 2])
-
-                with c1:
-                    st.markdown(f"**Video:** `{res['video_used']}`")
-                    st.markdown(f"**AI Friction Score:** {res['friction_score']}/5")
-
-                    # Show confidence score
-                    if res.get('confidence_score'):
-                        confidence_emoji = "🟢" if res['confidence_score'] >= 4 else "🟡" if res['confidence_score'] == 3 else "🔴"
-                        st.markdown(f"**AI Confidence:** {confidence_emoji} {res['confidence_score']}/5")
-
-                    # Show model and cost if available
-                    if 'model_used' in res:
-                        model_info = get_model_info(res['model_used'])
-                        st.caption(f"**Model:** {model_info['display_name']}")
-
-                    if 'cost' in res:
-                        st.caption(f"**Cost:** {format_cost(res['cost'])}")
-
-                    # Show video player if video exists
-                    if res.get('video_path') and Path(res['video_path']).exists():
+                    IMPORTANT: When mentioning costs, use "USD" instead of "$" symbol to avoid rendering issues.
+                    For example, write "0.29 USD" instead of "$0.29".
+                    """
+                    report = call_gemini(
+                        st.session_state.api_key,
+                        st.session_state.selected_model,
+                        report_prompt,
+                        "You are a Research Lead.",
+                        "text/plain"
+                    )
+                    if report:
                         st.markdown("---")
-                        st.markdown("**🎥 Review Video:**")
-                        with open(res['video_path'], 'rb') as video_file:
-                            video_bytes = video_file.read()
-                            st.video(video_bytes)
+                        st.markdown(report)
+                        st.markdown("---")
 
-                with c2:
-                    st.markdown(f"**Observation:** {res['observation']}")
+            st.markdown("")  # Spacing
+            st.markdown("---")
 
-                    # Show key moments if available
-                    if res.get('key_moments'):
-                        try:
-                            moments = json.loads(res['key_moments']) if isinstance(res['key_moments'], str) else res['key_moments']
-                            if moments:
-                                st.markdown("**📍 Key Moments:**")
-                                for moment in moments:
-                                    st.caption(f"• {moment}")
-                        except:
-                            pass
+            # Cards
+            for cuj_id, res in st.session_state.results.items():
+                # Find CUJ name for header
+                cuj_row = st.session_state.cujs[st.session_state.cujs['id'] == cuj_id].iloc[0]
 
-                    if 'recommendation' in res and res['recommendation']:
-                        st.info(f"💡 **Recommendation:** {res['recommendation']}")
+                # Determine effective status and friction (human override takes precedence)
+                effective_status = res.get('human_override_status') or res['status']
+                effective_friction = res.get('human_override_friction') or res['friction_score']
+                is_verified = res.get('human_verified', False)
 
-                    st.caption(f"CUJ ID: {cuj_id}")
+                # Build header with verification indicator
+                header = f"[{effective_status}] {cuj_row['task']} (Friction: {effective_friction}/5)"
+                if is_verified:
+                    header = f"✅ {header}"
 
-                # Human Verification Section
-                if not is_verified:
-                    st.markdown("---")
-                    st.markdown("### 👤 Human Verification")
+                with st.expander(header, expanded=not is_verified):
+                    # Show confidence warning if low
+                    if res.get('confidence_score') and res['confidence_score'] < 3:
+                        st.warning(f"⚠️ Low AI Confidence Score: {res['confidence_score']}/5 - Review recommended!")
 
-                    with st.form(key=f"verify_form_{cuj_id}"):
-                        col_verify1, col_verify2, col_verify3 = st.columns(3)
+                    # Verification status banner
+                    if is_verified:
+                        st.success("✓ Human Verified")
+                        if res.get('human_notes'):
+                            st.info(f"**Reviewer Notes:** {res['human_notes']}")
 
-                        with col_verify1:
-                            override_status = st.selectbox(
-                                "Override Status?",
-                                ["Keep AI", "Pass", "Fail", "Partial"],
-                                key=f"status_{cuj_id}"
-                            )
+                    st.markdown("")  # Add spacing
 
-                        with col_verify2:
-                            override_friction = st.selectbox(
-                                "Override Friction?",
-                                ["Keep AI", "1", "2", "3", "4", "5"],
-                                key=f"friction_{cuj_id}"
-                            )
+                    c1, c2 = st.columns([1.2, 2.8])
 
-                        with col_verify3:
+                    with c1:
+                        st.markdown(f"**Video:** `{res['video_used']}`")
+                        st.markdown(f"**AI Friction Score:** {res['friction_score']}/5")
+
+                        # Show confidence score
+                        if res.get('confidence_score'):
+                            confidence_emoji = "🟢" if res['confidence_score'] >= 4 else "🟡" if res['confidence_score'] == 3 else "🔴"
+                            st.markdown(f"**AI Confidence:** {confidence_emoji} {res['confidence_score']}/5")
+
+                        # Show model and cost if available
+                        if 'model_used' in res:
+                            model_info = get_model_info(res['model_used'])
+                            st.caption(f"**Model:** {model_info['display_name']}")
+
+                        if 'cost' in res:
+                            st.caption(f"**Cost:** {format_cost(res['cost'])}")
+
+                        # Show video player if video exists
+                        if res.get('video_path') and Path(res['video_path']).exists():
+                            st.markdown("---")
+                            st.markdown("**🎥 Review Video:**")
+                            with open(res['video_path'], 'rb') as video_file:
+                                video_bytes = video_file.read()
+                                st.video(video_bytes)
+
+                    with c2:
+                        st.markdown(f"**Observation:**")
+                        st.markdown(res['observation'])
+
+                        # Show key moments if available
+                        if res.get('key_moments'):
+                            try:
+                                moments = json.loads(res['key_moments']) if isinstance(res['key_moments'], str) else res['key_moments']
+                                if moments:
+                                    st.markdown("")  # Spacing
+                                    st.markdown("**📍 Key Moments:**")
+                                    for moment in moments:
+                                        st.caption(f"• {moment}")
+                            except:
+                                pass
+
+                        if 'recommendation' in res and res['recommendation']:
                             st.markdown("")  # Spacing
+                            st.info(f"💡 **Recommendation:** {res['recommendation']}")
 
-                        notes = st.text_area(
-                            "Reviewer Notes",
-                            placeholder="What did you actually observe in the video?",
-                            key=f"notes_{cuj_id}"
-                        )
+                        st.markdown("")  # Spacing
+                        st.caption(f"CUJ ID: {cuj_id}")
 
-                        if st.form_submit_button("✓ Mark as Verified", type="primary"):
-                            # Prepare overrides
-                            final_status = None if override_status == "Keep AI" else override_status
-                            final_friction = None if override_friction == "Keep AI" else int(override_friction)
+                    # Human Verification Section
+                    if not is_verified:
+                        st.markdown("---")
+                        st.markdown("### 👤 Human Verification")
 
-                            # Save verification
-                            if 'analysis_id' in res:
-                                success = db.verify_analysis(
-                                    res['analysis_id'],
-                                    override_status=final_status,
-                                    override_friction=final_friction,
-                                    notes=notes
+                        with st.form(key=f"verify_form_{cuj_id}"):
+                            col_verify1, col_verify2, col_verify3 = st.columns(3)
+
+                            with col_verify1:
+                                override_status = st.selectbox(
+                                    "Override Status?",
+                                    ["Keep AI", "Pass", "Fail", "Partial"],
+                                    key=f"status_{cuj_id}"
                                 )
 
-                                if success:
-                                    st.success("✅ Verification saved!")
-                                    time.sleep(1)
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to save verification")
-                else:
-                    # Show override info if present
-                    if res.get('human_override_status') or res.get('human_override_friction'):
-                        st.markdown("---")
-                        st.markdown("### 👤 Human Overrides Applied")
-                        if res.get('human_override_status'):
-                            st.caption(f"**Status Override:** {res['status']} → {res['human_override_status']}")
-                        if res.get('human_override_friction'):
-                            st.caption(f"**Friction Override:** {res['friction_score']} → {res['human_override_friction']}")
+                            with col_verify2:
+                                override_friction = st.selectbox(
+                                    "Override Friction?",
+                                    ["Keep AI", "1", "2", "3", "4", "5"],
+                                    key=f"friction_{cuj_id}"
+                                )
 
-    else:
-        st.info("No analysis results yet. Click 'Run Analysis' to start.")
+                            with col_verify3:
+                                st.markdown("")  # Spacing
+
+                            notes = st.text_area(
+                                "Reviewer Notes",
+                                placeholder="What did you actually observe in the video?",
+                                key=f"notes_{cuj_id}"
+                            )
+
+                            if st.form_submit_button("✓ Mark as Verified", type="primary"):
+                                # Prepare overrides
+                                final_status = None if override_status == "Keep AI" else override_status
+                                final_friction = None if override_friction == "Keep AI" else int(override_friction)
+
+                                # Save verification
+                                if 'analysis_id' in res:
+                                    success = db.verify_analysis(
+                                        res['analysis_id'],
+                                        override_status=final_status,
+                                        override_friction=final_friction,
+                                        notes=notes
+                                    )
+
+                                    if success:
+                                        st.success("✅ Verification saved!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error("Failed to save verification")
+                    else:
+                        # Show override info if present
+                        if res.get('human_override_status') or res.get('human_override_friction'):
+                            st.markdown("---")
+                            st.markdown("### 👤 Human Overrides Applied")
+                            if res.get('human_override_status'):
+                                st.caption(f"**Status Override:** {res['status']} → {res['human_override_status']}")
+                            if res.get('human_override_friction'):
+                                st.caption(f"**Friction Override:** {res['friction_score']} → {res['human_override_friction']}")
+
+        else:
+            st.info("No analysis results yet. Click 'Run Analysis' to start.")
