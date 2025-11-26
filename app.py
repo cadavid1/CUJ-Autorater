@@ -1137,9 +1137,16 @@ with tab_videos:
                 key="video_view_mode"
             )
 
+        # Update selected_videos list based on checkbox states (for Table view)
+        if view_mode == "Table":
+            st.session_state.selected_videos = [
+                row['id'] for _, row in st.session_state.videos.iterrows()
+                if st.session_state.get(f"check_{row['id']}", False)
+            ]
+
         with col_bulk:
             # Bulk actions only shown in table view
-            if view_mode == "Table" and 'selected_videos' in st.session_state and st.session_state.selected_videos:
+            if view_mode == "Table" and st.session_state.selected_videos:
                 if st.button(f"Delete {len(st.session_state.selected_videos)} selected video(s)", type="secondary"):
                     st.session_state.confirm_bulk_delete = True
 
@@ -1171,6 +1178,12 @@ with tab_videos:
                                 st.session_state.videos['id'] != video_id
                             ].reset_index(drop=True)
                             deleted_count += 1
+
+                    # Clear checkbox states for deleted videos
+                    for video_id in list(st.session_state.selected_videos):
+                        checkbox_key = f"check_{video_id}"
+                        if checkbox_key in st.session_state:
+                            del st.session_state[checkbox_key]
 
                     st.session_state.confirm_bulk_delete = False
                     st.session_state.selected_videos = []
@@ -1225,25 +1238,13 @@ with tab_videos:
                                 st.rerun()
 
         else:  # Table view
-            # Initialize selected videos in session state
-            if 'selected_videos' not in st.session_state:
-                st.session_state.selected_videos = []
-
             # Create table with checkboxes
-            table_data = []
             for idx, row in st.session_state.videos.iterrows():
-                is_selected = row['id'] in st.session_state.selected_videos
-
                 # Create row with checkbox
                 col_check, col_name, col_status, col_size, col_duration = st.columns([0.5, 3, 1.5, 1.5, 1.5])
 
                 with col_check:
-                    if st.checkbox("", value=is_selected, key=f"check_{row['id']}", label_visibility="collapsed"):
-                        if row['id'] not in st.session_state.selected_videos:
-                            st.session_state.selected_videos.append(row['id'])
-                    else:
-                        if row['id'] in st.session_state.selected_videos:
-                            st.session_state.selected_videos.remove(row['id'])
+                    st.checkbox("Select video", key=f"check_{row['id']}", label_visibility="collapsed")
 
                 with col_name:
                     st.markdown(f"📹 **{row['name']}**")

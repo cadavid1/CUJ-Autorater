@@ -609,22 +609,39 @@ class DatabaseManager:
         cursor.execute("SELECT COUNT(*) as count FROM videos")
         total_videos = cursor.fetchone()['count']
 
-        cursor.execute("SELECT COUNT(*) as count FROM analysis_results")
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM analysis_results ar
+            JOIN cujs c ON ar.cuj_id = c.id
+            JOIN videos v ON ar.video_id = v.id
+        """)
         total_analyses = cursor.fetchone()['count']
 
-        # Total cost
-        cursor.execute("SELECT SUM(cost) as total FROM analysis_results")
+        # Total cost (only for existing CUJs/videos)
+        cursor.execute("""
+            SELECT SUM(ar.cost) as total
+            FROM analysis_results ar
+            JOIN cujs c ON ar.cuj_id = c.id
+            JOIN videos v ON ar.video_id = v.id
+        """)
         total_cost = cursor.fetchone()['total'] or 0.0
 
-        # Average friction score
-        cursor.execute("SELECT AVG(friction_score) as avg FROM analysis_results")
+        # Average friction score (only for existing CUJs/videos)
+        cursor.execute("""
+            SELECT AVG(ar.friction_score) as avg
+            FROM analysis_results ar
+            JOIN cujs c ON ar.cuj_id = c.id
+            JOIN videos v ON ar.video_id = v.id
+        """)
         avg_friction = cursor.fetchone()['avg'] or 0.0
 
-        # Pass/Fail/Partial counts
+        # Pass/Fail/Partial counts (only for existing CUJs/videos)
         cursor.execute("""
-            SELECT status, COUNT(*) as count
-            FROM analysis_results
-            GROUP BY status
+            SELECT ar.status, COUNT(*) as count
+            FROM analysis_results ar
+            JOIN cujs c ON ar.cuj_id = c.id
+            JOIN videos v ON ar.video_id = v.id
+            GROUP BY ar.status
         """)
         status_counts = {row['status']: row['count'] for row in cursor.fetchall()}
 
