@@ -37,6 +37,11 @@ st.set_page_config(page_title="UXR CUJ Analysis", page_icon="🧪", layout="wide
 # Initialize authentication
 auth = get_auth()
 
+# IMPORTANT: Handle Drive OAuth callback BEFORE auth check
+# This allows the callback to restore authentication from the state token
+if DRIVE_AVAILABLE:
+    handle_drive_oauth_callback()
+
 # Require authentication - show login/register if not logged in
 if not auth.require_auth():
     st.stop()  # Stop execution if not authenticated
@@ -49,10 +54,6 @@ ensure_video_directory()
 
 # Initialize database
 db = get_db()
-
-# Handle Drive OAuth callback if Drive is available
-if DRIVE_AVAILABLE:
-    handle_drive_oauth_callback()
 
 # Initialize Session State
 if "cujs" not in st.session_state:
@@ -514,7 +515,11 @@ with tab_setup:
                 st.info("Sign in to access your Google Drive files")
 
                 try:
-                    _, auth_url = DriveClient.get_auth_url()
+                    # Pass user credentials to preserve authentication through OAuth redirect
+                    _, auth_url = DriveClient.get_auth_url(
+                        user_id=user_id,
+                        username=auth.get_current_username()
+                    )
                     st.markdown(f"### [🔐 Sign in with Google]({auth_url})")
                     st.caption("You'll be redirected to Google to authorize UXR CUJ Analysis")
                 except Exception as e:

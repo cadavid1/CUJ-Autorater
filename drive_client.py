@@ -6,6 +6,10 @@ Handles OAuth authentication and Drive operations
 import os
 import io
 import re
+import json
+import hmac
+import hashlib
+import base64
 import streamlit as st
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
@@ -22,6 +26,127 @@ import random
 class DriveAPIError(Exception):
     """Custom exception for Drive API errors"""
     pass
+
+
+def _get_state_secret() -> str:
+    """Get secret key for signing OAuth state tokens"""
+    # Use Streamlit secrets if available, otherwise fall back to env var
+    try:
+        secret = st.secrets.get("oauth_state_secret", os.getenv("OAUTH_STATE_SECRET", "default-secret-key"))
+        print(f"[OAuth Debug] Secret key from streamlit secrets: {repr(secret[:10])}... (length: {len(secret)})")
+        return secret
+    except Exception as e:
+        secret = os.getenv("OAUTH_STATE_SECRET", "default-secret-key")
+        print(f"[OAuth Debug] Secret key from env/default: {repr(secret[:10])}... (length: {len(secret)}) [Exception: {e}]")
+        return secret
+
+
+def _create_state_token(user_id: int, username: str) -> str:
+    """
+    Create a signed state token containing user authentication info
+
+    Args:
+        user_id: User ID
+        username: Username
+
+    Returns:
+        Base64-encoded signed token
+    """
+    # Create payload with user info
+    payload = {
+        "user_id": user_id,
+        "username": username,
+        "timestamp": time.time()
+    }
+
+    # Convert to JSON
+    payload_json = json.dumps(payload)
+    payload_bytes = payload_json.encode('utf-8')
+
+    # Create signature
+    print(f"[OAuth Debug] [CREATE] Getting secret for signing...")
+    secret = _get_state_secret()
+    print(f"[OAuth Debug] [CREATE] Using secret: {repr(secret[:10])}... (length: {len(secret)})")
+    print(f"[OAuth Debug] [CREATE] Payload to sign: {repr(payload_bytes[:50])}...")
+    signature = hmac.new(
+        secret.encode('utf-8'),
+        payload_bytes,
+        hashlib.sha256
+    ).digest()
+    print(f"[OAuth Debug] [CREATE] Generated signature: {base64.b64encode(signature).decode()[:32]}...")
+
+    # Combine payload and signature with NULL byte delimiter (safe because NULL won't appear in JSON)
+    token_bytes = payload_bytes + b'\x00' + signature
+
+    # Base64 encode
+    token = base64.urlsafe_b64encode(token_bytes).decode('utf-8')
+
+    print(f"[OAuth Debug] Created state token for user_id={user_id}, username={username}")
+    print(f"[OAuth Debug] Full created token: {token}")
+    print(f"[OAuth Debug] Created token length: {len(token)}")
+
+    return token
+
+
+def _verify_state_token(token: str) -> Optional[Dict]:
+    """
+    Verify and decode a state token
+
+    Args:
+        token: Base64-encoded signed token
+
+    Returns:
+        Dictionary with user_id and username if valid, None otherwise
+    """
+    print(f"[OAuth Debug] Verifying state token: {token[:50]}...")
+
+    try:
+        # Base64 decode
+        token_bytes = base64.urlsafe_b64decode(token.encode('utf-8'))
+
+        # Split payload and signature on NULL byte delimiter
+        parts = token_bytes.split(b'\x00', 1)
+        if len(parts) != 2:
+            print("[OAuth Debug] ❌ Invalid token format (missing signature)")
+            return None
+
+        payload_bytes, signature = parts
+        print(f"[OAuth Debug] [VERIFY] Received signature: {base64.b64encode(signature).decode()[:32]}...")
+        print(f"[OAuth Debug] [VERIFY] Payload to verify: {repr(payload_bytes[:50])}...")
+
+        # Verify signature
+        print(f"[OAuth Debug] [VERIFY] Getting secret for verification...")
+        secret = _get_state_secret()
+        print(f"[OAuth Debug] [VERIFY] Using secret: {repr(secret[:10])}... (length: {len(secret)})")
+        expected_signature = hmac.new(
+            secret.encode('utf-8'),
+            payload_bytes,
+            hashlib.sha256
+        ).digest()
+        print(f"[OAuth Debug] [VERIFY] Expected signature: {base64.b64encode(expected_signature).decode()[:32]}...")
+
+        if not hmac.compare_digest(signature, expected_signature):
+            print("[OAuth Debug] ❌ Signature verification failed")
+            print(f"[OAuth Debug] ❌ Received:  {base64.b64encode(signature).decode()}")
+            print(f"[OAuth Debug] ❌ Expected:  {base64.b64encode(expected_signature).decode()}")
+            return None
+
+        # Decode payload
+        payload = json.loads(payload_bytes.decode('utf-8'))
+        print(f"[OAuth Debug] ✅ Token decoded successfully: user_id={payload.get('user_id')}, username={payload.get('username')}")
+
+        # Check timestamp (reject tokens older than 1 hour)
+        token_age = time.time() - payload.get('timestamp', 0)
+        if token_age > 3600:
+            print(f"[OAuth Debug] ❌ Token expired (age: {token_age:.0f}s)")
+            return None
+
+        print(f"[OAuth Debug] ✅ Token valid (age: {token_age:.0f}s)")
+        return payload
+
+    except Exception as e:
+        print(f"[OAuth Debug] ❌ Error verifying state token: {e}")
+        return None
 
 
 class DriveClient:
@@ -92,14 +217,37 @@ class DriveClient:
         return Credentials(**creds_dict)
 
     @staticmethod
-    def get_auth_url() -> Tuple[Flow, str]:
-        """Get authorization URL for OAuth flow"""
+    def get_auth_url(user_id: Optional[int] = None, username: Optional[str] = None) -> Tuple[Flow, str]:
+        """
+        Get authorization URL for OAuth flow
+
+        Args:
+            user_id: Current user's ID to preserve in OAuth state
+            username: Current user's username to preserve in OAuth state
+
+        Returns:
+            Tuple of (Flow, auth_url)
+        """
+        print(f"[OAuth Debug] Generating auth URL for user_id={user_id}, username={username}")
+
         flow = DriveClient.create_oauth_flow()
+
+        # Create state token with user info if provided
+        state = None
+        if user_id is not None and username:
+            state = _create_state_token(user_id, username)
+            print(f"[OAuth Debug] State token will be included in OAuth URL")
+        else:
+            print(f"[OAuth Debug] ⚠️  No user info provided, state token will not be created")
+
         auth_url, _ = flow.authorization_url(
             prompt='consent',
             access_type='offline',  # Request refresh token
-            include_granted_scopes='true'
+            include_granted_scopes='true',
+            state=state  # Pass user info in state parameter
         )
+
+        print(f"[OAuth Debug] Auth URL generated (contains state={state is not None})")
         return flow, auth_url
 
     @staticmethod
@@ -523,22 +671,71 @@ def get_drive_client() -> Optional[DriveClient]:
 
 
 def handle_drive_oauth_callback():
-    """Handle OAuth callback from Google Drive"""
+    """
+    Handle OAuth callback from Google Drive
+
+    This function:
+    1. Checks for OAuth callback parameters (code, state)
+    2. Restores user authentication from state token if present
+    3. Exchanges authorization code for access token
+    4. Stores Drive credentials in session
+    """
     query_params = st.query_params
 
+    print(f"[OAuth Debug] Callback handler called. Query params: {list(query_params.keys())}")
+
     if 'code' in query_params:
+        print("[OAuth Debug] 🔄 OAuth callback detected (code parameter present)")
+
         try:
+            # Restore user authentication from state token if present
+            if 'state' in query_params:
+                print("[OAuth Debug] State parameter found in callback")
+                state_token = query_params['state']
+                print(f"[OAuth Debug] Raw state token from query params: {repr(state_token)}")
+                print(f"[OAuth Debug] State token length: {len(state_token)}")
+                print(f"[OAuth Debug] Full token: {state_token}")
+                user_data = _verify_state_token(state_token)
+
+                if user_data:
+                    print(f"[OAuth Debug] 🔐 Restoring authentication for user_id={user_data['user_id']}, username={user_data['username']}")
+
+                    # Restore authentication session
+                    st.session_state.authenticated = True
+                    st.session_state.user_id = user_data['user_id']
+                    st.session_state.username = user_data['username']
+
+                    # Get additional user info from database if needed
+                    from storage import get_db
+                    db = get_db()
+                    user = db.get_user_by_username(user_data['username'])
+                    if user:
+                        st.session_state.user_email = user.get('email')
+                        st.session_state.user_full_name = user.get('full_name', '')
+                        print(f"[OAuth Debug] ✅ Authentication restored successfully")
+                    else:
+                        print(f"[OAuth Debug] ⚠️  User not found in database")
+                else:
+                    print("[OAuth Debug] ❌ State token verification failed")
+                    st.warning("Session expired. Please log in again.")
+            else:
+                print("[OAuth Debug] ⚠️  No state parameter in callback - authentication will NOT be restored")
+
             # Exchange code for token
+            print("[OAuth Debug] Exchanging authorization code for access token...")
             credentials = DriveClient.exchange_code_for_token(query_params['code'])
 
             # Store in session state
             st.session_state.drive_credentials = credentials
+            print("[OAuth Debug] ✅ Drive credentials stored in session")
 
             # Clear query params
             st.query_params.clear()
+            print("[OAuth Debug] Query params cleared, triggering rerun...")
             st.rerun()
 
         except Exception as e:
+            print(f"[OAuth Debug] ❌ Exception during OAuth callback: {e}")
             st.error(f"Drive authentication failed: {e}")
             return False
 
