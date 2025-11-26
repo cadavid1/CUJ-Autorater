@@ -4,7 +4,6 @@ Handles user registration, login, and session management
 """
 
 import streamlit as st
-import streamlit_authenticator as stauth
 import bcrypt
 from storage import get_db
 from typing import Optional, Tuple
