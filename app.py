@@ -591,7 +591,7 @@ with tab_cujs:
 
     with col2:
         st.markdown("### Critical User Journeys")
-        # Editable Data Table
+        # Editable Data Table with proper state management
         edited_df = st.data_editor(
             st.session_state.cujs,
             num_rows="dynamic",
@@ -600,28 +600,44 @@ with tab_cujs:
                 "id": "ID",
                 "task": "Task Name",
                 "expectation": st.column_config.TextColumn("Expected Behavior", width="large")
-            }
+            },
+            key="cuj_editor"
         )
+
         # Save changes back to session state and database
-        if not edited_df.equals(st.session_state.cujs):
-            # Filter out rows with missing required fields before saving
-            valid_rows = edited_df[
-                edited_df['id'].notna() &
-                edited_df['task'].notna() &
-                edited_df['expectation'].notna() &
-                (edited_df['id'].astype(str).str.strip() != '') &
-                (edited_df['task'].astype(str).str.strip() != '') &
-                (edited_df['expectation'].astype(str).str.strip() != '')
-            ]
+        # Use a more robust comparison that handles index differences
+        try:
+            # Reset indices for proper comparison
+            edited_normalized = edited_df.reset_index(drop=True)
+            current_normalized = st.session_state.cujs.reset_index(drop=True)
 
-            # Show warning if any rows were invalid
-            invalid_count = len(edited_df) - len(valid_rows)
-            if invalid_count > 0:
-                st.warning(f"⚠️ Skipped {invalid_count} row(s) with missing required fields (ID, Task, or Expectation)")
+            # Check if dataframes are different (content-wise)
+            is_different = not edited_normalized.equals(current_normalized)
 
-            # Update session state with valid rows only
-            st.session_state.cujs = valid_rows.reset_index(drop=True)
-            db.bulk_save_cujs(valid_rows)
+            if is_different:
+                # Filter out rows with missing required fields before saving
+                valid_rows = edited_df[
+                    edited_df['id'].notna() &
+                    edited_df['task'].notna() &
+                    edited_df['expectation'].notna() &
+                    (edited_df['id'].astype(str).str.strip() != '') &
+                    (edited_df['task'].astype(str).str.strip() != '') &
+                    (edited_df['expectation'].astype(str).str.strip() != '')
+                ].copy()
+
+                # Show warning if any rows were invalid
+                invalid_count = len(edited_df) - len(valid_rows)
+                if invalid_count > 0:
+                    st.warning(f"⚠️ Skipped {invalid_count} row(s) with missing required fields (ID, Task, or Expectation)")
+
+                # Update session state with valid rows only
+                st.session_state.cujs = valid_rows.reset_index(drop=True)
+                db.bulk_save_cujs(valid_rows)
+                st.success("✅ CUJs saved successfully!")
+                time.sleep(0.5)
+                st.rerun()
+        except Exception as e:
+            st.error(f"Error saving CUJs: {e}")
 
 # --- TAB: VIDEO ASSETS ---
 
