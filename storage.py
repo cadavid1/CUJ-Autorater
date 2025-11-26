@@ -40,7 +40,7 @@ class DatabaseManager:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 full_name TEXT,
@@ -136,6 +136,7 @@ class DatabaseManager:
         # Migration: Add new columns to existing databases
         self._migrate_analysis_results_table(cursor)
         self._migrate_to_multiuser(cursor)
+        self._migrate_email_optional(cursor)
 
         conn.commit()
         conn.close()
@@ -235,6 +236,53 @@ class DatabaseManager:
                         INSERT INTO settings (user_id, key, value)
                         VALUES (?, ?, ?)
                     """, (default_user_id, key, value))
+
+    def _migrate_email_optional(self, cursor):
+        """Migrate users table to make email optional"""
+        try:
+            # Check current schema
+            cursor.execute("PRAGMA table_info(users)")
+            columns = cursor.fetchall()
+
+            # Find email column and check if it's NOT NULL
+            email_col = None
+            for col in columns:
+                if col[1] == 'email':  # col[1] is column name
+                    email_col = col
+                    break
+
+            # If email column exists and is NOT NULL, rebuild table
+            if email_col and email_col[3] == 1:  # col[3] is notnull flag
+                print("Migrating users table to make email optional...")
+
+                # Get existing users
+                cursor.execute("SELECT id, email, username, password_hash, full_name, created_at, last_login FROM users")
+                existing_users = cursor.fetchall()
+
+                # Recreate table with new schema
+                cursor.execute("DROP TABLE users")
+                cursor.execute("""
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        email TEXT UNIQUE,
+                        username TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        full_name TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_login TIMESTAMP
+                    )
+                """)
+
+                # Restore users
+                for user in existing_users:
+                    cursor.execute("""
+                        INSERT INTO users (id, email, username, password_hash, full_name, created_at, last_login)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, user)
+
+                print("Users table migration complete!")
+        except Exception as e:
+            print(f"Email optional migration warning: {e}")
 
     # === User Management ===
 

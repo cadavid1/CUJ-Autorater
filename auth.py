@@ -43,14 +43,14 @@ class AuthManager:
             Tuple of (success: bool, message: str)
         """
         # Validate inputs
-        if not email or not username or not password:
-            return False, "All fields are required"
+        if not username or not password:
+            return False, "Username and password are required"
 
         if len(password) < 6:
             return False, "Password must be at least 6 characters"
 
         # Check if user already exists
-        if self.db.get_user_by_email(email):
+        if email and self.db.get_user_by_email(email):
             return False, "Email already registered"
 
         if self.db.get_user_by_username(username):
@@ -58,7 +58,7 @@ class AuthManager:
 
         # Hash password and create user
         password_hash = self.hash_password(password)
-        user_id = self.db.create_user(email, username, password_hash, full_name)
+        user_id = self.db.create_user(email or None, username, password_hash, full_name)
 
         if user_id:
             return True, "Registration successful! Please log in."
@@ -201,11 +201,11 @@ class AuthManager:
         st.header("Register")
 
         with st.form("register_form"):
-            email = st.text_input("Email", key="register_email")
             username = st.text_input("Username", key="register_username")
-            full_name = st.text_input("Full Name (optional)", key="register_full_name")
             password = st.text_input("Password", type="password", key="register_password")
             password_confirm = st.text_input("Confirm Password", type="password", key="register_password_confirm")
+            email = st.text_input("Email (optional)", key="register_email")
+            full_name = st.text_input("Full Name (optional)", key="register_full_name")
 
             submit = st.form_submit_button("Register", type="primary", use_container_width=True)
 
