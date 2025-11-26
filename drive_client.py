@@ -5,6 +5,7 @@ Handles OAuth authentication and Drive operations
 
 import os
 import io
+import re
 import streamlit as st
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
@@ -100,6 +101,50 @@ class DriveClient:
             include_granted_scopes='true'
         )
         return flow, auth_url
+
+    @staticmethod
+    def parse_drive_url(url: str) -> Optional[Tuple[str, str]]:
+        """
+        Parse Google Drive URL to extract file/folder ID and type
+
+        Supported URL formats:
+        - https://drive.google.com/file/d/{id}/view
+        - https://drive.google.com/drive/folders/{id}
+        - https://drive.google.com/open?id={id}
+        - https://drive.google.com/drive/u/0/folders/{id}
+
+        Args:
+            url: Google Drive URL
+
+        Returns:
+            Tuple of (id, type) where type is 'file' or 'folder', or None if invalid
+        """
+        if not url or not isinstance(url, str):
+            return None
+
+        # Pattern for file URLs
+        file_pattern = r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)'
+        # Pattern for folder URLs
+        folder_pattern = r'drive\.google\.com/(?:drive/)?(?:u/\d+/)?folders/([a-zA-Z0-9_-]+)'
+        # Pattern for open?id= URLs (could be file or folder)
+        open_pattern = r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)'
+
+        # Try file pattern
+        match = re.search(file_pattern, url)
+        if match:
+            return (match.group(1), 'file')
+
+        # Try folder pattern
+        match = re.search(folder_pattern, url)
+        if match:
+            return (match.group(1), 'folder')
+
+        # Try open pattern (assume file by default)
+        match = re.search(open_pattern, url)
+        if match:
+            return (match.group(1), 'file')
+
+        return None
 
     @staticmethod
     def exchange_code_for_token(code: str) -> Dict:
@@ -212,15 +257,96 @@ class DriveClient:
         except Exception as e:
             raise DriveAPIError(f"Failed to list files: {str(e)}")
 
-    def list_video_files(self, page_size: int = 50) -> List[Dict]:
-        """List only video files from Drive"""
-        query = " or ".join([f"mimeType='{mime}'" for mime in self.VIDEO_MIME_TYPES])
+    def list_video_files(self, page_size: int = 50, folder_id: Optional[str] = None,
+                        search_query: Optional[str] = None, recursive: bool = False) -> List[Dict]:
+        """
+        List video files from Drive with optional folder filtering and search
+
+        Args:
+            page_size: Number of files to return
+            folder_id: Optional folder ID to search within (None = root)
+            search_query: Optional search query for filename
+            recursive: If True, search all subfolders
+
+        Returns:
+            List of video file dictionaries
+        """
+        # Build query for video files
+        mime_query = " or ".join([f"mimeType='{mime}'" for mime in self.VIDEO_MIME_TYPES])
+        query_parts = [f"({mime_query})"]
+
+        # Add folder constraint if specified
+        if folder_id and not recursive:
+            query_parts.append(f"'{folder_id}' in parents")
+
+        # Add search query if specified
+        if search_query:
+            query_parts.append(f"name contains '{search_query}'")
+
+        # Combine all query parts
+        query = " and ".join(query_parts)
 
         try:
             results = self.list_files(page_size=page_size, query=query)
             return results.get('files', [])
         except Exception as e:
             raise DriveAPIError(f"Failed to list video files: {str(e)}")
+
+    def list_folders(self, parent_folder_id: Optional[str] = None, page_size: int = 50) -> List[Dict]:
+        """
+        List folders in Drive
+
+        Args:
+            parent_folder_id: Optional parent folder ID (None = root)
+            page_size: Number of folders to return
+
+        Returns:
+            List of folder dictionaries
+        """
+        query = "mimeType='application/vnd.google-apps.folder'"
+
+        if parent_folder_id:
+            query += f" and '{parent_folder_id}' in parents"
+
+        try:
+            results = self.list_files(page_size=page_size, query=query)
+            return results.get('files', [])
+        except Exception as e:
+            raise DriveAPIError(f"Failed to list folders: {str(e)}")
+
+    def get_folder_path(self, folder_id: str) -> List[Dict]:
+        """
+        Get the full path of a folder (breadcrumb trail)
+
+        Args:
+            folder_id: Folder ID to get path for
+
+        Returns:
+            List of folder dictionaries from root to current folder
+        """
+        if not self.service:
+            raise DriveAPIError("Drive service not initialized")
+
+        path = []
+        current_id = folder_id
+
+        try:
+            while current_id:
+                folder = self.service.files().get(
+                    fileId=current_id,
+                    fields='id, name, parents'
+                ).execute()
+
+                path.insert(0, {'id': folder['id'], 'name': folder.get('name', 'Unknown')})
+
+                # Get parent folder if exists
+                parents = folder.get('parents', [])
+                current_id = parents[0] if parents else None
+
+            return path
+        except Exception as e:
+            # If we can't get full path, just return what we have
+            return path
 
     def download_file(self, file_id: str, destination_path: str,
                       progress_callback=None) -> bool:

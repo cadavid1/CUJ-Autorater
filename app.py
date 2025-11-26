@@ -95,6 +95,96 @@ if "db_synced" not in st.session_state:
 
 # --- HELPER FUNCTIONS ---
 
+def get_confidence_indicator(score):
+    """Generate monochrome confidence indicator based on score (1-5)
+
+    Returns filled/empty circles to avoid color theory confusion with Pass/Fail status.
+    High confidence (4-5): ●●●●● or ●●●●○
+    Medium confidence (3): ●●●○○
+    Low confidence (1-2): ●○○○○ or ●●○○○
+    """
+    filled = "●"
+    empty = "○"
+
+    if score >= 5:
+        return f"{filled * 5}"
+    elif score == 4:
+        return f"{filled * 4}{empty}"
+    elif score == 3:
+        return f"{filled * 3}{empty * 2}"
+    elif score == 2:
+        return f"{filled * 2}{empty * 3}"
+    else:  # score 1
+        return f"{filled}{empty * 4}"
+
+def get_friction_label(friction_score):
+    """Generate descriptive friction label
+
+    Makes friction scores immediately understandable:
+    1-2: Smooth/Minimal friction
+    3: Moderate friction
+    4-5: High friction/Blocker
+    """
+    if friction_score <= 2:
+        return "Smooth"
+    elif friction_score == 3:
+        return "Moderate"
+    else:  # 4-5
+        return "High"
+
+def check_first_time_user():
+    """Show welcome message for first-time users"""
+    if 'welcome_shown' not in st.session_state:
+        stats = db.get_statistics()
+        is_first_time = (
+            stats['total_analyses'] == 0 and
+            not st.session_state.api_key
+        )
+        if is_first_time:
+            st.info("""
+            👋 **Welcome to UXR CUJ Analysis!**
+
+            This tool uses AI to analyze user session videos against Critical User Journeys (CUJs).
+
+            **Quick Start:**
+            1. Add your Gemini API key in System Setup
+            2. Define CUJs (test scenarios) or generate with AI
+            3. Upload session recording videos
+            4. Run analysis to evaluate each session
+
+            💡 Follow the Workflow Progress tracker in the sidebar →
+            """)
+        st.session_state.welcome_shown = True
+
+def render_progress_stepper():
+    """Render workflow progress stepper in sidebar"""
+    has_api_key = bool(st.session_state.api_key)
+    has_cujs = not st.session_state.cujs.empty
+    valid_videos = st.session_state.videos[
+        st.session_state.videos.get('file_path', pd.Series(dtype='object')).notna() &
+        (st.session_state.videos.get('status', pd.Series(dtype='str')).str.lower() == 'ready')
+    ]
+    has_videos = not valid_videos.empty
+    has_results = bool(st.session_state.results)
+
+    st.sidebar.markdown("### Workflow Progress")
+
+    steps = [
+        ("Setup", has_api_key, "Configure API key & model"),
+        ("CUJs", has_cujs, "Define test scenarios"),
+        ("Videos", has_videos, "Upload recordings"),
+        ("Analyze", has_results, "Run AI analysis")
+    ]
+
+    for i, (label, is_complete, description) in enumerate(steps, 1):
+        if is_complete:
+            st.sidebar.success(f"**{i}. ✓ {label}**")
+        else:
+            st.sidebar.info(f"**{i}. ○ {label}**")
+        st.sidebar.caption(f"   {description}")
+
+    st.sidebar.markdown("---")
+
 def call_gemini(api_key, model_name, prompt, system_instruction, response_mime_type="application/json"):
     """Legacy function for text-only Gemini calls (CUJ generation, reports, etc.)"""
     result = call_gemini_text(api_key, model_name, prompt, system_instruction, response_mime_type)
@@ -107,35 +197,202 @@ def call_gemini(api_key, model_name, prompt, system_instruction, response_mime_t
         return result
     return result.get("text") if result else None
 
-# --- SIDEBAR NAVIGATION ---
+# --- SIDEBAR ---
 
 st.sidebar.title("🧪 UXR CUJ Analysis")
 st.sidebar.markdown("Powered by Gemini")
 st.sidebar.warning("⚠️ This application is currently under development and not private. Don't test with any production data (run locally for privacy). Ask David Pearl if unsure how to get this deployed.")
 st.sidebar.markdown("---")
 
-page = st.sidebar.radio("Navigation", ["System Setup", "CUJ Data Source", "Video Assets", "Analysis Dashboard"])
+# Workflow Progress Stepper
+render_progress_stepper()
 
-st.sidebar.markdown("---")
+# Enhanced Status Indicators
+st.sidebar.markdown("### System Status")
+
+# API Key status
 if st.session_state.api_key:
-    st.sidebar.success("API Key Loaded")
+    st.sidebar.success("🔑 API Key: Connected")
 else:
-    st.sidebar.warning("No API Key")
+    st.sidebar.error("🔑 API Key: Not Set")
+    st.sidebar.caption("   → Go to System Setup tab")
+
+# CUJ status
+cuj_count = len(st.session_state.cujs)
+if cuj_count > 0:
+    st.sidebar.success(f"📋 CUJs: {cuj_count} defined")
+else:
+    st.sidebar.warning("📋 CUJs: None defined")
+    st.sidebar.caption("   → Go to Define CUJs tab")
+
+# Video status
+valid_video_count = len(st.session_state.videos[
+    st.session_state.videos.get('file_path', pd.Series(dtype='object')).notna() &
+    (st.session_state.videos.get('status', pd.Series(dtype='str')).str.lower() == 'ready')
+])
+if valid_video_count > 0:
+    st.sidebar.success(f"📹 Videos: {valid_video_count} ready")
+else:
+    st.sidebar.warning("📹 Videos: None uploaded")
+    st.sidebar.caption("   → Go to Upload Videos tab")
 
 # Drive status
 if DRIVE_AVAILABLE:
+    st.sidebar.markdown("")
     if is_drive_authenticated():
-        st.sidebar.success("📁 Drive Connected")
-        if st.sidebar.button("Logout from Drive"):
+        st.sidebar.info("📁 Drive: Connected")
+        if st.sidebar.button("Logout from Drive", key="sidebar_logout"):
             logout_drive()
             st.rerun()
     else:
-        st.sidebar.info("📁 Drive Not Connected")
+        st.sidebar.info("📁 Drive: Not connected")
 
-# --- PAGE: SYSTEM SETUP ---
+st.sidebar.markdown("---")
 
-if page == "System Setup":
-    st.header("⚙️ System Setup")
+# Keyboard Shortcuts & Tips
+with st.sidebar.expander("⌨️ Shortcuts & Tips"):
+    st.markdown("""
+    **Navigation:**
+    - Tab through fields with `Tab` key
+    - Press `Enter` in forms to submit
+    - Use `Esc` to close dialogs
+
+    **Quick Tips:**
+    - Check Workflow Progress above to see next steps
+    - Green status = ready to proceed
+    - Cost Estimator in Upload Videos tab
+    - Low confidence results auto-expand for review
+
+    **Getting Help:**
+    - Hover over (?) icons for field help
+    - Check empty states for guidance
+    - Contact support if stuck
+    """)
+
+# --- MAIN CONTENT WITH HORIZONTAL TABS ---
+
+# Show welcome message for first-time users
+check_first_time_user()
+
+tab_home, tab_setup, tab_cujs, tab_videos, tab_analysis = st.tabs([
+    "🏠 Home",
+    "⚙️ System Setup",
+    "📋 Define CUJs",
+    "📹 Upload Videos",
+    "🚀 Run Analysis"
+])
+
+# --- TAB: HOME/OVERVIEW ---
+
+with tab_home:
+    st.header("Welcome to UXR CUJ Analysis")
+
+    # Quick stats overview
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("📋 CUJs", len(st.session_state.cujs))
+    with col2:
+        valid_video_count_home = len(st.session_state.videos[
+            st.session_state.videos.get('file_path', pd.Series(dtype='object')).notna() &
+            (st.session_state.videos.get('status', pd.Series(dtype='str')).str.lower() == 'ready')
+        ])
+        st.metric("📹 Videos", valid_video_count_home)
+    with col3:
+        stats_home = db.get_statistics()
+        st.metric("🔬 Analyses", stats_home['total_analyses'])
+    with col4:
+        st.metric("💰 Total Cost", format_cost(stats_home['total_cost']))
+
+    st.markdown("---")
+
+    # Two-column layout for overview
+    col_left, col_right = st.columns([1, 1])
+
+    with col_left:
+        st.markdown("### 🚀 Quick Start Guide")
+        st.markdown("""
+        **1. System Setup**
+        - Add your Gemini API key
+        - Select AI model (default: Gemini 2.5 Pro)
+        - Optional: Connect Google Drive
+
+        **2. Define CUJs**
+        - Create Critical User Journeys manually
+        - Or generate with AI
+        - Import from CSV for bulk operations
+
+        **3. Upload Videos**
+        - Upload session recordings (MP4, MOV, AVI, WebM)
+        - Max 900 MB, up to 90 minutes
+        - Check cost estimates before uploading
+
+        **4. Run Analysis**
+        - AI evaluates videos against CUJs
+        - Review confidence scores
+        - Verify and override results
+        - Export to CSV/JSON
+        """)
+
+        st.markdown("---")
+
+        # System readiness check
+        st.markdown("### ✅ System Readiness")
+        if st.session_state.api_key:
+            st.success("🔑 API Key configured")
+        else:
+            st.error("🔑 API Key missing - Go to System Setup")
+
+        if len(st.session_state.cujs) > 0:
+            st.success(f"📋 {len(st.session_state.cujs)} CUJ(s) defined")
+        else:
+            st.warning("📋 No CUJs - Go to Define CUJs")
+
+        if valid_video_count_home > 0:
+            st.success(f"📹 {valid_video_count_home} video(s) ready")
+        else:
+            st.warning("📹 No videos - Go to Upload Videos")
+
+    with col_right:
+        st.markdown("### 📊 Recent Activity")
+
+        # Show recent analyses
+        recent_df = db.get_analysis_results(limit=5)
+        if not recent_df.empty:
+            for _, row in recent_df.iterrows():
+                status_emoji = "✅" if row['status'] == "Pass" else "❌" if row['status'] == "Fail" else "⚠️"
+                st.caption(f"{status_emoji} **{row['cuj_task']}** - Friction: {row['friction_score']}/5")
+                st.caption(f"   ↳ {row['video_name']} • {row['analyzed_at'][:10]}")
+                st.markdown("")
+        else:
+            st.info("No analyses yet. Ready to start!")
+
+        st.markdown("---")
+
+        # Key features highlight
+        st.markdown("### ✨ Key Features")
+        st.markdown("""
+        - **7 AI Models** - From fast/cheap to advanced reasoning
+        - **Cost Transparency** - See estimates before analysis
+        - **Confidence Scores** - AI rates its own certainty
+        - **Human Verification** - Override and validate results
+        - **Google Drive** - Import videos, export results
+        - **Bulk Operations** - Import/export CUJs via CSV
+        - **Rich Analytics** - Status breakdown, friction trends
+        """)
+
+        if stats_home['total_analyses'] > 0:
+            st.markdown("---")
+            st.markdown("### 📈 Performance Summary")
+            if stats_home.get('status_counts'):
+                total = sum(stats_home['status_counts'].values())
+                for status, count in stats_home['status_counts'].items():
+                    pct = (count / total * 100) if total > 0 else 0
+                    st.caption(f"• **{status}**: {count} ({pct:.0f}%)")
+
+# --- TAB: SYSTEM SETUP ---
+
+with tab_setup:
+    st.header("System Setup")
     
     with st.expander("Gemini Configuration", expanded=True):
         new_api_key = st.text_input("Gemini API Key", value=st.session_state.api_key, type="password")
@@ -231,11 +488,25 @@ if page == "System Setup":
                     st.error(f"Drive configuration error: {e}")
                     st.caption("Make sure you've configured Drive OAuth in `.streamlit/secrets.toml`")
 
-# --- PAGE: CUJ DATA SOURCE ---
+# --- TAB: CUJ DATA SOURCE ---
 
-elif page == "CUJ Data Source":
-    st.header("📋 CUJ Data Source")
-    
+with tab_cujs:
+    st.header("CUJ Data Source")
+
+    # Show helpful empty state if no CUJs
+    if st.session_state.cujs.empty:
+        st.info("""
+        📋 **No CUJs defined yet**
+
+        Critical User Journeys define the tasks you want to test.
+
+        **Get started:**
+        - Click "Generate with AI" to create sample CUJs
+        - Or add rows manually in the table below
+
+        **Example:** "Sign up for account" with expectation "User completes signup form without errors"
+        """)
+
     col1, col2 = st.columns([1, 3])
     with col1:
         st.markdown("### Actions")
@@ -269,6 +540,54 @@ elif page == "CUJ Data Source":
                             # Save to database
                             db.bulk_save_cujs(new_df)
                             st.rerun()
+
+        st.markdown("")
+
+        # Import/Export
+        with st.popover("📁 Import/Export CUJs"):
+            st.markdown("**Import from CSV**")
+            st.caption("CSV must have columns: id, task, expectation")
+
+            uploaded_csv = st.file_uploader("Upload CSV", type=['csv'], key="cuj_import")
+
+            if uploaded_csv:
+                try:
+                    imported_df = pd.read_csv(uploaded_csv)
+                    required_cols = {'id', 'task', 'expectation'}
+
+                    if not required_cols.issubset(imported_df.columns):
+                        st.error(f"Missing columns: {', '.join(required_cols - set(imported_df.columns))}")
+                    else:
+                        st.success(f"Found {len(imported_df)} CUJs")
+                        if st.button("Import CUJs", type="primary"):
+                            if st.session_state.cujs.empty:
+                                st.session_state.cujs = imported_df[['id', 'task', 'expectation']]
+                            else:
+                                st.session_state.cujs = pd.concat([
+                                    st.session_state.cujs,
+                                    imported_df[['id', 'task', 'expectation']]
+                                ], ignore_index=True)
+
+                            db.bulk_save_cujs(imported_df)
+                            st.success(f"Imported {len(imported_df)} CUJs!")
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"Import failed: {e}")
+
+            st.markdown("---")
+            st.markdown("**Export to CSV**")
+
+            if not st.session_state.cujs.empty:
+                csv_data = st.session_state.cujs.to_csv(index=False)
+                st.download_button(
+                    "Download CSV",
+                    data=csv_data,
+                    file_name=f"cujs_export_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.caption("No CUJs to export")
 
     with col2:
         st.markdown("### Critical User Journeys")
@@ -304,10 +623,10 @@ elif page == "CUJ Data Source":
             st.session_state.cujs = valid_rows.reset_index(drop=True)
             db.bulk_save_cujs(valid_rows)
 
-# --- PAGE: VIDEO ASSETS ---
+# --- TAB: VIDEO ASSETS ---
 
-elif page == "Video Assets":
-    st.header("📹 Video Assets")
+with tab_videos:
+    st.header("Video Assets")
 
     # Create tabs for local upload and Drive import
     if DRIVE_AVAILABLE and is_drive_authenticated():
@@ -318,6 +637,41 @@ elif page == "Video Assets":
 
     with tab1:
         st.info("💡 Upload real video files to analyze with Gemini. Videos will be validated and stored locally.")
+
+        # Cost Estimator
+        with st.expander("💰 Cost Estimator", expanded=False):
+            st.markdown("**Estimate analysis costs before uploading**")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                duration_input = st.number_input(
+                    "Video duration (minutes)",
+                    min_value=1,
+                    max_value=90,
+                    value=5,
+                    help="Enter expected video length"
+                )
+            with col2:
+                model_info = get_model_info(st.session_state.selected_model)
+                st.caption(f"**Using:** {model_info['display_name']}")
+
+            cost_info = estimate_cost(duration_input * 60, st.session_state.selected_model)
+
+            st.metric(
+                "Estimated Cost per Video",
+                format_cost(cost_info['total_cost']),
+                help="Actual cost may vary based on exact video length and audio content"
+            )
+
+            st.caption(f"💡 For a {duration_input}-minute video • Based on {model_info['display_name']}")
+
+            # Show examples
+            st.markdown("**Quick Reference:**")
+            for mins in [1, 5, 30]:
+                cost = estimate_cost(mins * 60, st.session_state.selected_model)
+                st.caption(f"• {mins} min video ≈ {format_cost(cost['total_cost'])}")
+
+        st.markdown("---")
 
         # File Uploader
         uploaded_files = st.file_uploader(
@@ -423,13 +777,156 @@ elif page == "Video Assets":
 
             drive_client = get_drive_client()
             if drive_client:
+                # Initialize folder navigation state
+                if 'drive_current_folder' not in st.session_state:
+                    st.session_state.drive_current_folder = None  # None = root
+                if 'drive_search_query' not in st.session_state:
+                    st.session_state.drive_search_query = ""
+
                 try:
-                    # List video files from Drive
-                    with st.spinner("Loading videos from Drive..."):
-                        video_files = drive_client.list_video_files(page_size=50)
+                    # Drive link navigation
+                    st.markdown("**🔗 Navigate by Link**")
+                    link_input = st.text_input(
+                        "Paste Drive link",
+                        placeholder="https://drive.google.com/drive/folders/... or .../file/d/...",
+                        help="Paste a Google Drive folder or file link to navigate directly",
+                        key="drive_link_input"
+                    )
+
+                    if link_input:
+                        from drive_client import DriveClient
+                        parsed = DriveClient.parse_drive_url(link_input)
+
+                        if parsed:
+                            file_id, file_type = parsed
+                            if file_type == 'folder':
+                                # Navigate to folder
+                                if st.button("📁 Go to this folder", type="primary"):
+                                    st.session_state.drive_current_folder = file_id
+                                    st.rerun()
+                            elif file_type == 'file':
+                                # Show single file for import
+                                st.info("📹 File link detected - loading video...")
+                                if 'drive_link_file_id' not in st.session_state:
+                                    st.session_state.drive_link_file_id = None
+                                if st.session_state.drive_link_file_id != file_id:
+                                    st.session_state.drive_link_file_id = file_id
+                                    st.rerun()
+                        else:
+                            st.error("Invalid Drive link. Please paste a valid Google Drive folder or file URL.")
+
+                    st.markdown("---")
+
+                    # Search and navigation controls
+                    col_search, col_recursive = st.columns([3, 1])
+
+                    with col_search:
+                        search_input = st.text_input(
+                            "Search videos",
+                            value=st.session_state.drive_search_query,
+                            placeholder="Search by filename...",
+                            key="drive_search_input"
+                        )
+                        if search_input != st.session_state.drive_search_query:
+                            st.session_state.drive_search_query = search_input
+                            st.rerun()
+
+                    with col_recursive:
+                        recursive_search = st.checkbox(
+                            "Search all folders",
+                            value=False,
+                            help="Search in all subfolders (may be slower)"
+                        )
+
+                    # Breadcrumb navigation
+                    if 'drive_link_file_id' in st.session_state and st.session_state.drive_link_file_id:
+                        # Show that we're viewing a specific file
+                        col_breadcrumb, col_clear = st.columns([3, 1])
+                        with col_breadcrumb:
+                            st.caption("📹 Viewing file from link")
+                        with col_clear:
+                            if st.button("← Back to browsing"):
+                                st.session_state.drive_link_file_id = None
+                                st.rerun()
+                    elif st.session_state.drive_current_folder:
+                        # Get folder path for breadcrumbs
+                        try:
+                            folder_path = drive_client.get_folder_path(st.session_state.drive_current_folder)
+
+                            # Build breadcrumb
+                            breadcrumb_parts = []
+                            if st.button("🏠 My Drive", key="breadcrumb_root"):
+                                st.session_state.drive_current_folder = None
+                                st.rerun()
+
+                            for i, folder in enumerate(folder_path):
+                                st.caption(" → " + folder['name'])
+                        except:
+                            st.caption(f"📁 Current folder")
+                            if st.button("← Back to My Drive"):
+                                st.session_state.drive_current_folder = None
+                                st.rerun()
+                    else:
+                        st.caption("📁 My Drive")
+
+                    st.markdown("---")
+
+                    # Show folders in current directory (unless searching all folders)
+                    if not recursive_search and not st.session_state.drive_search_query:
+                        with st.spinner("Loading folders..."):
+                            folders = drive_client.list_folders(
+                                parent_folder_id=st.session_state.drive_current_folder,
+                                page_size=20
+                            )
+
+                        if folders:
+                            st.markdown("**📁 Folders**")
+                            folder_cols = st.columns(min(len(folders), 4))
+                            for idx, folder in enumerate(folders[:8]):  # Show max 8 folders
+                                with folder_cols[idx % 4]:
+                                    if st.button(f"📁 {folder['name']}", key=f"folder_{folder['id']}", use_container_width=True):
+                                        st.session_state.drive_current_folder = folder['id']
+                                        st.rerun()
+
+                            if len(folders) > 8:
+                                st.caption(f"...and {len(folders) - 8} more folders")
+
+                            st.markdown("---")
+
+                    # List video files from current folder, search results, or specific file link
+                    with st.spinner("Loading videos..."):
+                        # Check if a specific file was requested via link
+                        if 'drive_link_file_id' in st.session_state and st.session_state.drive_link_file_id:
+                            try:
+                                # Fetch specific file metadata
+                                file_metadata = drive_client.service.files().get(
+                                    fileId=st.session_state.drive_link_file_id,
+                                    fields='id, name, mimeType, size, modifiedTime, webViewLink'
+                                ).execute()
+
+                                # Check if it's a video file
+                                if any(mime in file_metadata.get('mimeType', '') for mime in drive_client.VIDEO_MIME_TYPES):
+                                    video_files = [file_metadata]
+                                    st.info(f"📹 Showing file from link: {file_metadata['name']}")
+                                else:
+                                    st.error("The linked file is not a supported video format.")
+                                    video_files = []
+                            except Exception as e:
+                                st.error(f"Could not load file from link: {str(e)}")
+                                video_files = []
+                                st.session_state.drive_link_file_id = None
+                        else:
+                            # Normal browsing/search
+                            video_files = drive_client.list_video_files(
+                                page_size=50,
+                                folder_id=st.session_state.drive_current_folder if not recursive_search else None,
+                                search_query=st.session_state.drive_search_query if st.session_state.drive_search_query else None,
+                                recursive=recursive_search
+                            )
 
                     if video_files:
-                        st.success(f"Found {len(video_files)} video(s) in your Drive")
+                        if not ('drive_link_file_id' in st.session_state and st.session_state.drive_link_file_id):
+                            st.success(f"Found {len(video_files)} video(s) in your Drive")
 
                         # Display videos with import button
                         for file in video_files:
@@ -526,45 +1023,163 @@ elif page == "Video Assets":
                 st.error("Failed to connect to Drive. Please check your connection in System Setup.")
 
     st.markdown("### Manage Videos")
-    st.caption("Upload videos above, then manage them in the table below. Delete videos you no longer need to save space.")
+    st.caption("Upload videos above, then manage them below. Delete videos you no longer need to save space.")
 
     if not st.session_state.videos.empty:
-        # Display videos table
-        for idx, row in st.session_state.videos.iterrows():
-            with st.expander(f"📹 {row['name']} - {row['status']}", expanded=False):
-                col1, col2 = st.columns([2, 1])
+        # View toggle
+        col_view, col_bulk = st.columns([2, 3])
+        with col_view:
+            view_mode = st.radio(
+                "View mode",
+                ["Cards", "Table"],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="video_view_mode"
+            )
 
-                with col1:
-                    st.markdown(f"**Status:** {row['status']}")
-                    if row.get('description'):
-                        st.markdown(f"**Details:** {row['description']}")
-                    if row.get('file_path') and Path(row['file_path']).exists():
-                        st.markdown(f"**File:** `{row['file_path']}`")
+        with col_bulk:
+            # Bulk actions only shown in table view
+            if view_mode == "Table" and 'selected_videos' in st.session_state and st.session_state.selected_videos:
+                if st.button(f"Delete {len(st.session_state.selected_videos)} selected video(s)", type="secondary"):
+                    st.session_state.confirm_bulk_delete = True
 
-                with col2:
-                    # Delete button
-                    if st.button(f"🗑️ Delete", key=f"delete_{row['id']}"):
-                        # Delete file if exists
-                        if row.get('file_path'):
-                            delete_video_file(row['file_path'])
+        # Handle bulk delete confirmation
+        if st.session_state.get('confirm_bulk_delete', False):
+            st.warning(f"⚠️ Delete {len(st.session_state.selected_videos)} selected video(s)? This cannot be undone.")
+            col_cancel, col_confirm = st.columns(2)
+            with col_cancel:
+                if st.button("Cancel Bulk Delete", key="cancel_bulk", use_container_width=True):
+                    st.session_state.confirm_bulk_delete = False
+                    st.rerun()
+            with col_confirm:
+                if st.button("Confirm Bulk Delete", key="confirm_bulk", type="secondary", use_container_width=True):
+                    deleted_count = 0
+                    for video_id in st.session_state.selected_videos:
+                        # Find video row
+                        video_row = st.session_state.videos[st.session_state.videos['id'] == video_id]
+                        if not video_row.empty:
+                            # Delete file if exists
+                            file_path = video_row.iloc[0].get('file_path')
+                            if file_path:
+                                delete_video_file(file_path)
 
-                        # Delete from database
-                        db.delete_video(row['id'])
+                            # Delete from database
+                            db.delete_video(video_id)
 
-                        # Remove from dataframe
-                        st.session_state.videos = st.session_state.videos[
-                            st.session_state.videos['id'] != row['id']
-                        ].reset_index(drop=True)
-                        st.success(f"Deleted {row['name']}")
-                        st.rerun()
+                            # Remove from dataframe
+                            st.session_state.videos = st.session_state.videos[
+                                st.session_state.videos['id'] != video_id
+                            ].reset_index(drop=True)
+                            deleted_count += 1
+
+                    st.session_state.confirm_bulk_delete = False
+                    st.session_state.selected_videos = []
+                    st.success(f"Deleted {deleted_count} video(s)")
+                    st.rerun()
+
+        st.markdown("---")
+
+        # Display based on view mode
+        if view_mode == "Cards":
+            # Card view (original implementation)
+            for idx, row in st.session_state.videos.iterrows():
+                with st.expander(f"📹 {row['name']} - {row['status']}", expanded=False):
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        st.markdown(f"**Status:** {row['status']}")
+                        if row.get('description'):
+                            st.markdown(f"**Details:** {row['description']}")
+                        if row.get('file_path') and Path(row['file_path']).exists():
+                            st.markdown(f"**File:** `{row['file_path']}`")
+
+                    with col2:
+                        # Delete button with confirmation
+                        if st.button("Delete", key=f"delete_{row['id']}", type="secondary"):
+                            st.session_state[f"confirm_delete_{row['id']}"] = True
+
+                    # Confirmation dialog
+                    if st.session_state.get(f"confirm_delete_{row['id']}", False):
+                        st.warning("⚠️ Delete this video? This cannot be undone.")
+                        col_cancel, col_confirm = st.columns(2)
+                        with col_cancel:
+                            if st.button("Cancel", key=f"cancel_{row['id']}", use_container_width=True):
+                                st.session_state[f"confirm_delete_{row['id']}"] = False
+                                st.rerun()
+                        with col_confirm:
+                            if st.button("Confirm Delete", key=f"confirm_{row['id']}", type="secondary", use_container_width=True):
+                                # Delete file if exists
+                                if row.get('file_path'):
+                                    delete_video_file(row['file_path'])
+
+                                # Delete from database
+                                db.delete_video(row['id'])
+
+                                # Remove from dataframe
+                                st.session_state.videos = st.session_state.videos[
+                                    st.session_state.videos['id'] != row['id']
+                                ].reset_index(drop=True)
+
+                                st.session_state[f"confirm_delete_{row['id']}"] = False
+                                st.success(f"Deleted {row['name']}")
+                                st.rerun()
+
+        else:  # Table view
+            # Initialize selected videos in session state
+            if 'selected_videos' not in st.session_state:
+                st.session_state.selected_videos = []
+
+            # Create table with checkboxes
+            table_data = []
+            for idx, row in st.session_state.videos.iterrows():
+                is_selected = row['id'] in st.session_state.selected_videos
+
+                # Create row with checkbox
+                col_check, col_name, col_status, col_size, col_duration = st.columns([0.5, 3, 1.5, 1.5, 1.5])
+
+                with col_check:
+                    if st.checkbox("", value=is_selected, key=f"check_{row['id']}", label_visibility="collapsed"):
+                        if row['id'] not in st.session_state.selected_videos:
+                            st.session_state.selected_videos.append(row['id'])
+                    else:
+                        if row['id'] in st.session_state.selected_videos:
+                            st.session_state.selected_videos.remove(row['id'])
+
+                with col_name:
+                    st.markdown(f"📹 **{row['name']}**")
+
+                with col_status:
+                    status_emoji = "✅" if row['status'].lower() == 'ready' else "⏳"
+                    st.markdown(f"{status_emoji} {row['status']}")
+
+                with col_size:
+                    if row.get('size_mb'):
+                        st.caption(f"{row['size_mb']:.1f} MB")
+                    else:
+                        st.caption("—")
+
+                with col_duration:
+                    if row.get('duration'):
+                        st.caption(format_duration(row['duration']))
+                    else:
+                        st.caption("—")
     else:
-        st.info("No videos uploaded yet. Use the uploader above to add videos.")
+        st.info("""
+        📹 **No videos uploaded**
 
-# --- PAGE: ANALYSIS DASHBOARD ---
+        Upload user session recordings to analyze.
 
-elif page == "Analysis Dashboard":
-    st.header("🚀 Analysis Dashboard")
-    st.markdown("") # Add breathing room
+        **Supported:** MP4, MOV, AVI, WebM
+        **Max size:** 900 MB per video
+        **Max duration:** 90 minutes
+
+        💡 Use the Cost Estimator above to preview costs
+        """)
+
+# --- TAB: ANALYSIS DASHBOARD ---
+
+with tab_analysis:
+    st.header("Analysis Dashboard")
 
     # Check if we have videos with valid file paths
     valid_videos = st.session_state.videos[
@@ -572,7 +1187,24 @@ elif page == "Analysis Dashboard":
         (st.session_state.videos['status'].str.lower() == 'ready')
     ]
 
-    col_actions, col_summary = st.columns([1.2, 3.8])
+    # Top stats banner
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    with col_s1:
+        st.metric("CUJs Defined", len(st.session_state.cujs))
+    with col_s2:
+        st.metric("Videos Ready", len(valid_videos))
+    with col_s3:
+        if st.session_state.results:
+            st.metric("Analyses Complete", len(st.session_state.results))
+        else:
+            st.metric("Analyses Complete", 0)
+    with col_s4:
+        stats = db.get_statistics()
+        st.metric("Total Spent", format_cost(stats['total_cost']))
+
+    st.markdown("---")
+
+    col_actions, col_summary = st.columns([1, 2.5])
 
     with col_actions:
         st.markdown("### Actions")
@@ -590,7 +1222,7 @@ elif page == "Analysis Dashboard":
         st.markdown("")  # Spacing
 
         # Run Analysis button (PRIMARY ACTION - at top)
-        if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
+        if st.button("Run Analysis", type="primary", use_container_width=True):
             if not st.session_state.api_key:
                 st.error("Missing API Key")
             elif valid_videos.empty:
@@ -823,48 +1455,63 @@ elif page == "Analysis Dashboard":
 
         st.markdown("---")
 
-        # Statistics
-        stats = db.get_statistics()
-        if stats['total_analyses'] > 0:
-            with st.expander("📊 Statistics", expanded=True):
+        # Statistics (detailed breakdown)
+        with st.expander("📊 Statistics"):
+            stats = db.get_statistics()
+            if stats['total_analyses'] > 0:
                 st.metric("Total Analyses", stats['total_analyses'])
                 st.metric("Total Cost", format_cost(stats['total_cost']))
                 st.metric("Avg Friction", f"{stats['avg_friction_score']:.1f}/5")
 
                 if stats['status_counts']:
                     st.markdown("")  # Spacing
-                    st.caption("**Status Breakdown:**")
+                    st.markdown("**Status Breakdown:**")
                     for status, count in stats['status_counts'].items():
-                        st.caption(f"  • {status}: {count}")
+                        st.caption(f"• {status}: {count}")
+
+                # Cost tracking chart
+                st.markdown("")  # Spacing
+                st.markdown("**📈 Cost Trend (Last 30 Days)**")
+
+                cost_history = db.get_cost_history(days=30)
+                if cost_history:
+                    # Convert to pandas DataFrame for charting
+                    import pandas as pd
+                    chart_df = pd.DataFrame(cost_history)
+                    chart_df['date'] = pd.to_datetime(chart_df['date'])
+                    chart_df = chart_df.set_index('date')
+
+                    st.line_chart(chart_df, use_container_width=True)
+                    st.caption(f"Total spend over {len(cost_history)} day(s) with analyses")
+                else:
+                    st.caption("No cost data available yet")
+            else:
+                st.info("No analyses yet")
 
         # Export options
-        if st.session_state.results:
-            st.markdown("")  # Spacing
-            with st.expander("📥 Export Results", expanded=False):
-                st.markdown("Export analysis results to file")
-                st.markdown("")  # Spacing
+        with st.expander("📥 Export"):
+            if st.session_state.results:
+                st.markdown("Export results to file")
+                if st.button("Export CSV", use_container_width=True):
+                    filepath = db.export_results_to_csv()
+                    log_export("CSV", filepath)
+                    st.success("✓ Exported to CSV")
+                    st.caption(f"`{filepath}`")
 
-                col_exp1, col_exp2 = st.columns(2)
-                with col_exp1:
-                    if st.button("📄 CSV", use_container_width=True):
-                        filepath = db.export_results_to_csv()
-                        log_export("CSV", filepath)
-                        st.success(f"✓ Exported to CSV")
-                        st.caption(f"`{filepath}`")
-
-                with col_exp2:
-                    if st.button("📋 JSON", use_container_width=True):
-                        filepath = db.export_results_to_json()
-                        log_export("JSON", filepath)
-                        st.success(f"✓ Exported to JSON")
-                        st.caption(f"`{filepath}`")
+                if st.button("Export JSON", use_container_width=True):
+                    filepath = db.export_results_to_json()
+                    log_export("JSON", filepath)
+                    st.success("✓ Exported to JSON")
+                    st.caption(f"`{filepath}`")
+            else:
+                st.info("No results to export")
 
         st.markdown("---")
 
         # Video-CUJ Mapping
-        if not st.session_state.cujs.empty and not valid_videos.empty:
-            with st.expander("🎯 Manual Video-CUJ Mapping", expanded=False):
-                st.caption("Assign specific videos to CUJs (optional)")
+        with st.expander("🎯 Video Mapping"):
+            if not st.session_state.cujs.empty and not valid_videos.empty:
+                st.caption("Assign specific videos to CUJs")
 
                 # Initialize mapping in session state
                 if "cuj_video_mapping" not in st.session_state:
@@ -884,9 +1531,11 @@ elif page == "Analysis Dashboard":
                         st.session_state.cuj_video_mapping[cuj['id']] = video_dict[selected_video]
                     elif cuj['id'] in st.session_state.cuj_video_mapping:
                         del st.session_state.cuj_video_mapping[cuj['id']]
+            else:
+                st.info("Add CUJs and videos first")
 
         # Analysis History
-        with st.expander("📜 View Analysis History", expanded=False):
+        with st.expander("📜 History"):
             history_df = db.get_analysis_results(limit=20)
             if not history_df.empty:
                 st.dataframe(
@@ -907,14 +1556,14 @@ elif page == "Analysis Dashboard":
             with col_summary_header:
                 st.markdown("### 📊 Analysis Results")
             with col_clear:
-                if st.button("🗑️ Clear", help="Clear all results from display (data is still in database)"):
+                if st.button("Clear Results", help="Clear all results from display (data is still in database)"):
                     st.session_state.results = {}
                     st.rerun()
 
             st.markdown("")  # Spacing
 
             # Report Generator
-            if st.button("✨ Draft Executive Report", use_container_width=True):
+            if st.button("Generate Report", use_container_width=True):
                 with st.spinner("Writing report..."):
                     report_prompt = f"""
                     Write an executive summary markdown report based on these results:
@@ -936,6 +1585,31 @@ elif page == "Analysis Dashboard":
                         st.markdown("---")
 
             st.markdown("")  # Spacing
+
+            # Confidence Overview
+            st.markdown("### Confidence Overview")
+
+            confidence_counts = {"High (4-5)": 0, "Medium (3)": 0, "Low (1-2)": 0}
+            for res in st.session_state.results.values():
+                score = res.get('confidence_score', 5)
+                if score >= 4:
+                    confidence_counts["High (4-5)"] += 1
+                elif score == 3:
+                    confidence_counts["Medium (3)"] += 1
+                else:
+                    confidence_counts["Low (1-2)"] += 1
+
+            col_c1, col_c2, col_c3 = st.columns(3)
+            with col_c1:
+                st.metric("●●●●● High (4-5)", confidence_counts["High (4-5)"],
+                          help="AI is very confident in these results")
+            with col_c2:
+                st.metric("●●●○○ Medium (3)", confidence_counts["Medium (3)"],
+                          help="AI has moderate confidence")
+            with col_c3:
+                st.metric("●○○○○ Low (1-2)", confidence_counts["Low (1-2)"],
+                          help="These results should be reviewed - AI is uncertain")
+
             st.markdown("---")
 
             # Cards
@@ -954,15 +1628,34 @@ elif page == "Analysis Dashboard":
                 effective_friction = res.get('human_override_friction') or res['friction_score']
                 is_verified = res.get('human_verified', False)
 
-                # Build header with verification indicator
-                header = f"[{effective_status}] {cuj_row['task']} (Friction: {effective_friction}/5)"
+                # Determine confidence-based expansion
+                confidence_score = res.get('confidence_score', 5)
+
+                if confidence_score >= 4:
+                    expanded = False
+                    review_flag = ""
+                elif confidence_score == 3:
+                    expanded = False
+                    review_flag = ""
+                else:
+                    expanded = True  # Auto-expand for review
+                    review_flag = " ⚠️ REVIEW NEEDED"
+
+                # Build friction display with descriptive label
+                friction_label = get_friction_label(effective_friction)
+
+                # Build compact, scannable header
+                # Format: [Status] Task Name • Friction: 5/5 (High) • AI: 5●
+                header = f"[{effective_status}] {cuj_row['task']} • Friction: {effective_friction}/5 ({friction_label}) • AI: {confidence_score}●{review_flag}"
+
                 if is_verified:
                     header = f"✅ {header}"
+                    expanded = False  # Collapse verified results
 
-                with st.expander(header, expanded=not is_verified):
-                    # Show confidence warning if low
-                    if res.get('confidence_score') and res['confidence_score'] < 3:
-                        st.warning(f"⚠️ Low AI Confidence Score: {res['confidence_score']}/5 - Review recommended!")
+                with st.expander(header, expanded=expanded):
+                    # Show confidence warning if low (at top of card)
+                    if confidence_score < 3:
+                        st.error(f"⚠️ Low AI Confidence ({confidence_score}/5) - Human review required")
 
                     # Verification status banner
                     if is_verified:
@@ -1093,4 +1786,16 @@ elif page == "Analysis Dashboard":
                                 st.caption(f"**Friction Override:** {res['friction_score']} → {res['human_override_friction']}")
 
         else:
-            st.info("No analysis results yet. Click 'Run Analysis' to start.")
+            st.info("""
+            🚀 **Ready to start analyzing!**
+
+            Click "Run Analysis" to evaluate your videos.
+
+            **What happens:**
+            1. Each CUJ is tested against a video
+            2. AI evaluates task completion and friction
+            3. Results show Pass/Fail status and recommendations
+            4. You can verify and override AI results
+
+            ⏱️ **Time:** ~2-5 minutes per video
+            """)

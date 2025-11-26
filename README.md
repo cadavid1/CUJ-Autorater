@@ -54,7 +54,28 @@ An intelligent tool for analyzing user session videos against Critical User Jour
 - 💾 **Local Caching**: Drive videos cached locally for fast re-analysis
 - 🔄 **Seamless Integration**: Tabbed interface for local uploads and Drive imports
 
-### Recent Enhancements ✨
+### Sprint 6: Major UX/UI Overhaul ✨ (Latest!)
+- 🎨 **Horizontal Tab Navigation**: Replaced sidebar with intuitive top tabs (Home, Setup, CUJs, Videos, Analysis)
+- 🏠 **Home Dashboard**: New overview page with quick stats, system readiness, recent activity, and getting started guide
+- 📊 **Workflow Progress Stepper**: Visual progress tracker in sidebar showing completion of each step (Setup → CUJs → Videos → Analyze)
+- 🎯 **Enhanced Status Indicators**: Color-coded system status with counts and navigation hints
+- 💰 **Cost Preview Calculator**: Estimate costs before uploading videos with quick reference table
+- 🎨 **Custom Theme**: Professional indigo theme with improved visual hierarchy
+- 📁 **Advanced Drive Navigation**:
+  - Folder browser with breadcrumb navigation
+  - Search by filename with recursive folder search
+  - Paste Drive links to navigate directly to folders or files
+  - Click-to-navigate folder grid
+- 🔍 **Improved Scannability**:
+  - Monochrome confidence indicators (●●●●● instead of colored emojis)
+  - Compact result headers: `[Status] Task • Friction: 5/5 (High) • AI: 5●`
+  - Descriptive friction labels (Smooth/Moderate/High)
+- 📋 **Bulk CUJ Operations**: Import/export CUJs via CSV for batch management
+- ✅ **Better Empty States**: Helpful guidance when no CUJs, videos, or results exist
+- ⌨️ **Keyboard Shortcuts Guide**: Quick tips and shortcuts reference in sidebar
+- 🔘 **Button Hierarchy**: Clear visual priority (primary/secondary/default actions)
+
+### Previous Enhancements ✅
 - 👤 **Human Verification Workflow**: Mark analyses as verified, override AI decisions, add notes
 - 📊 **Confidence Scores**: AI rates its own certainty (1-5 scale) with low-confidence warnings
 - 📍 **Key Moments**: Timestamped observations extracted from video analysis
@@ -120,40 +141,61 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-2. **System Setup** (First-time setup):
+2. **🏠 Home Dashboard** (First stop):
+   - View quick stats: CUJs defined, videos uploaded, analyses complete, total cost
+   - Check system readiness with color-coded status indicators
+   - See recent activity and analysis history
+   - Follow the Quick Start Guide to get oriented
+   - Monitor your workflow progress in the sidebar (Setup → CUJs → Videos → Analyze)
+
+3. **⚙️ System Setup** (First-time setup):
+   - Click the "System Setup" tab at the top
    - Enter your Gemini API Key
    - Select your preferred model (default: Gemini 2.5 Flash-Lite for cost efficiency)
    - Customize the system prompt if needed
+   - **Optional**: Connect Google Drive for video imports
 
-3. **Define CUJs**:
-   - Go to "CUJ Data Source" page
-   - Add CUJs manually or use AI to generate them
-   - Edit the task name and expected behavior for each CUJ
+4. **📋 Define CUJs**:
+   - Click the "Define CUJs" tab
+   - **Option A**: Add CUJs manually in the editable table
+   - **Option B**: Use "Generate with AI" to create CUJs from a topic/feature
+   - **Option C**: Import from CSV for bulk operations
+   - Export your CUJs to CSV for backup or sharing
 
-4. **Upload Videos**:
-   - Go to "Video Assets" page
-   - **Option A**: Upload from local files (mp4, mov, avi, webm)
-   - **Option B**: Import from Google Drive (if connected)
+5. **📹 Upload Videos**:
+   - Click the "Upload Videos" tab
+   - **Use the Cost Estimator** to preview analysis costs before uploading
+   - **Local Upload**: Upload from your computer (mp4, mov, avi, webm)
+   - **Drive Import** (if connected):
+     - Browse folders with breadcrumb navigation
+     - Search videos by filename (with recursive search option)
+     - Paste Drive links to jump directly to folders or files
+     - Click folder buttons to navigate through your Drive
    - Videos are automatically validated and stored locally
-   - See cost estimates for each video
 
-5. **Run Analysis**:
-   - Go to "Analysis Dashboard"
-   - Click "Run Analysis" to start
-   - Watch real-time progress as videos are analyzed
+6. **🚀 Run Analysis**:
+   - Click the "Run Analysis" tab
+   - Review the top stats banner (CUJs, Videos, Analyses, Cost)
+   - Check readiness status (green = ready to go)
+   - Click "Run Analysis" button to start
+   - Watch real-time progress with stage indicators
    - View results with friction scores, observations, and recommendations
 
-6. **Review & Verify Results**:
-   - View AI analysis with friction scores and observations
+7. **📊 Review & Verify Results**:
+   - View the Confidence Overview with clear indicators (●●●●● High, ●●●○○ Medium, ●○○○○ Low)
+   - Scan result headers: `[Status] Task • Friction: 5/5 (High) • AI: 5●`
+   - Low confidence results auto-expand for review
    - Check confidence scores (AI rates its own certainty 1-5)
    - Review key moments (timestamped observations)
    - Watch videos directly in the results panel
    - Mark analyses as verified with optional overrides
    - Add reviewer notes for manual observations
 
-7. **Generate Reports**:
-   - Click "Draft Executive Report" to generate a summary
-   - Export results to CSV/JSON for stakeholder review
+8. **📥 Generate Reports & Export**:
+   - Click "Generate Report" to create an executive summary
+   - Use the Export expander for CSV/JSON downloads
+   - Check Statistics expander for detailed breakdowns
+   - View Analysis History for past results
 
 ## Model Selection Guide
 
@@ -256,12 +298,14 @@ After AI analysis completes, each result can be human-verified:
 **Why verify?** AI confidence scores help identify uncertain analyses. Low confidence (< 3) suggests the video may be ambiguous or the CUJ unclear.
 
 ### Confidence Scores
-The AI rates its own certainty on each analysis:
-- **5**: Very confident, clear success/failure
-- **4**: Confident, minor ambiguity
-- **3**: Moderate confidence, some uncertainty (⚠️ review recommended)
-- **2**: Low confidence, significant ambiguity (⚠️ review required)
-- **1**: Very uncertain, needs human review (⚠️ review required)
+The AI rates its own certainty on each analysis using a **monochrome indicator system** (to avoid color theory confusion with Pass/Fail status):
+- **●●●●● (5)**: Very confident, clear success/failure
+- **●●●●○ (4)**: Confident, minor ambiguity
+- **●●●○○ (3)**: Moderate confidence, some uncertainty (⚠️ review recommended)
+- **●●○○○ (2)**: Low confidence, significant ambiguity (⚠️ review required)
+- **●○○○○ (1)**: Very uncertain, needs human review (⚠️ review required)
+
+**Why monochrome?** Filled/empty circles clearly indicate AI certainty without conflicting with status colors. A high confidence (●●●●●) score next to [Fail] means the AI is certain about the failure, not that the result is "good".
 
 ### Key Moments
 The AI extracts timestamped observations from videos:
@@ -319,12 +363,12 @@ Automatic exponential backoff protects against transient failures:
 
 ## Roadmap
 
-### ✅ Completed (v1.0.0 - v2.0.0)
-**Sprint 1-5 + Recent Enhancements:**
+### ✅ Completed (v1.0.0 - v2.1.0)
+**Sprint 1-6 Complete:**
 - ✅ Real video upload and analysis
 - ✅ 7 Gemini models (3 Pro, 2.5 Pro, 2.5 Flash, 2.0 Flash variants)
 - ✅ Progress tracking with multi-stage indicators
-- ✅ Cost estimation and tracking
+- ✅ Cost estimation and tracking with preview calculator
 - ✅ SQLite database with auto-migration
 - ✅ Settings auto-save (API key, model selection)
 - ✅ Video cleanup options
@@ -332,12 +376,19 @@ Automatic exponential backoff protects against transient failures:
 - ✅ Export to CSV/JSON
 - ✅ Statistics dashboard
 - ✅ Comprehensive error logging
-- ✅ Google Drive integration (OAuth, import, export)
+- ✅ Google Drive integration (OAuth, folder navigation, link import, export)
 - ✅ Human verification workflow
-- ✅ Confidence scores and warnings
+- ✅ Confidence scores with monochrome indicators
 - ✅ Key moments extraction
 - ✅ Video playback in results
 - ✅ Automatic retry logic with exponential backoff
+- ✅ Horizontal tab navigation with Home dashboard
+- ✅ Workflow progress stepper in sidebar
+- ✅ Enhanced Drive navigation (folders, search, paste links)
+- ✅ Bulk CUJ import/export via CSV
+- ✅ Custom indigo theme
+- ✅ Improved result scannability with compact headers
+- ✅ Empty states with helpful guidance
 
 ### 🎯 Future Enhancements
 **High Priority:**
@@ -445,6 +496,6 @@ Then configure your Gemini API key in the System Setup page.
 
 ---
 
-**Version**: 2.0.0 | **Last Updated**: November 2024 | **Status**: Active Development
+**Version**: 2.1.0 | **Last Updated**: January 2025 | **Status**: Active Development
 
 **Note**: This tool requires a valid Gemini API key. Video analysis costs vary based on model selection and video duration. Always review cost estimates before processing large batches. Supports videos up to 900MB and 90 minutes in length. For privacy, use local deployment only.

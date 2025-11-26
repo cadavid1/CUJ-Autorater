@@ -639,6 +639,39 @@ class DatabaseManager:
             'status_counts': status_counts
         }
 
+    def get_cost_history(self, days: int = 30) -> List[Dict]:
+        """Get daily cost aggregations for charting
+
+        Args:
+            days: Number of days to look back (default 30)
+
+        Returns:
+            List of dicts with 'date' and 'cost' keys, ordered chronologically
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                DATE(analyzed_at) as date,
+                SUM(cost) as daily_cost
+            FROM analysis_results
+            WHERE analyzed_at >= DATE('now', '-' || ? || ' days')
+            GROUP BY DATE(analyzed_at)
+            ORDER BY date ASC
+        """, (days,))
+
+        results = cursor.fetchall()
+        conn.close()
+
+        # Convert to list of dicts
+        cost_history = [
+            {'date': row['date'], 'cost': row['daily_cost'] or 0.0}
+            for row in results
+        ]
+
+        return cost_history
+
 
 # Singleton instance
 _db_instance = None
