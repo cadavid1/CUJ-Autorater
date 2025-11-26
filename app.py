@@ -54,19 +54,9 @@ db = get_db()
 if DRIVE_AVAILABLE:
     handle_drive_oauth_callback()
 
-SAMPLE_CUJS = [
-    {"id": "CUJ-001", "task": "Sign Up", "expectation": "User finds the 'Sign Up' button on the homepage and completes the email form without validation errors."},
-    {"id": "CUJ-002", "task": "Search for Product", "expectation": "User uses the search bar to find 'Wireless Headphones' and clicks on the first relevant result."},
-    {"id": "CUJ-003", "task": "Checkout", "expectation": "User adds item to cart, proceeds to checkout, and enters shipping info successfully."}
-]
-
-SAMPLE_VIDEOS = [
-    {"id": 1, "name": "Sample_Session_1.mp4", "status": "No file", "file_path": None, "duration": None, "size_mb": None, "description": "Upload a real video to analyze"}
-]
-
 # Initialize Session State
 if "cujs" not in st.session_state:
-    # Load from database, fall back to sample data
+    # Load from database
     loaded_cujs = db.get_cujs(user_id)
 
     # Clean up any corrupt entries with None/empty IDs before loading
@@ -94,9 +84,8 @@ if "cujs" not in st.session_state:
             loaded_cujs = db.get_cujs(user_id)
 
     if loaded_cujs.empty:
-        st.session_state.cujs = pd.DataFrame(SAMPLE_CUJS)
-        # Save sample data to database
-        db.bulk_save_cujs(user_id, st.session_state.cujs)
+        # Start with empty dataframe - don't populate with sample data
+        st.session_state.cujs = pd.DataFrame(columns=['id', 'task', 'expectation'])
     else:
         # Filter out any remaining corrupt entries before loading into session state
         clean_cujs = loaded_cujs[
@@ -106,10 +95,11 @@ if "cujs" not in st.session_state:
         st.session_state.cujs = clean_cujs
 
 if "videos" not in st.session_state:
-    # Load from database, fall back to sample data
+    # Load from database
     loaded_videos = db.get_videos(user_id)
     if loaded_videos.empty:
-        st.session_state.videos = pd.DataFrame(SAMPLE_VIDEOS)
+        # Start with empty dataframe - don't populate with sample data
+        st.session_state.videos = pd.DataFrame(columns=['id', 'name', 'status', 'file_path', 'duration', 'size_mb', 'description'])
     else:
         st.session_state.videos = loaded_videos
 
@@ -541,13 +531,22 @@ with tab_cujs:
         st.info("""
         📋 **No CUJs defined yet**
 
-        Critical User Journeys define the tasks you want to test.
+        Critical User Journeys (CUJs) define the tasks you want to test.
 
         **Get started:**
-        - Click "Generate with AI" to create sample CUJs
+        - Click "Generate with AI" to create CUJs automatically
         - Or add rows manually in the table below
+        """)
 
-        **Example:** "Sign up for account" with expectation "User completes signup form without errors"
+        st.markdown("### 💡 Example CUJs")
+        st.markdown("""
+        Here are some example CUJs to give you an idea of what to create:
+
+        | ID | Task | Expectation |
+        |---|---|---|
+        | CUJ-001 | Sign Up | User finds the 'Sign Up' button on the homepage and completes the email form without validation errors. |
+        | CUJ-002 | Search for Product | User uses the search bar to find 'Wireless Headphones' and clicks on the first relevant result. |
+        | CUJ-003 | Checkout | User adds item to cart, proceeds to checkout, and enters shipping info successfully. |
         """)
 
     col1, col2 = st.columns([1, 3])
@@ -1283,13 +1282,26 @@ with tab_videos:
         st.info("""
         📹 **No videos uploaded**
 
-        Upload user session recordings to analyze.
+        Upload user session recordings above to analyze against your CUJs.
 
-        **Supported:** MP4, MOV, AVI, WebM
+        **Supported formats:** MP4, MOV, AVI, WebM
         **Max size:** 900 MB per video
         **Max duration:** 90 minutes
 
-        💡 Use the Cost Estimator above to preview costs
+        💡 Use the Cost Estimator above to preview analysis costs
+        """)
+
+        st.markdown("### 💡 What videos should I upload?")
+        st.markdown("""
+        Upload screen recordings of users completing tasks. Each video should show:
+        - A user attempting one or more of your defined CUJs
+        - The full user journey from start to completion (or failure)
+        - Clear screen captures showing UI interactions
+
+        **Example videos:**
+        - `user_signup_session.mp4` - 2min video showing new user registration
+        - `checkout_flow_test.mp4` - 5min video of user completing purchase
+        - `search_and_browse.mp4` - 3min video of product search behavior
         """)
 
 # --- TAB: ANALYSIS DASHBOARD ---
