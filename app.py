@@ -57,12 +57,42 @@ SAMPLE_VIDEOS = [
 if "cujs" not in st.session_state:
     # Load from database, fall back to sample data
     loaded_cujs = db.get_cujs()
+
+    # Clean up any corrupt entries with None/empty IDs before loading
+    if not loaded_cujs.empty:
+        has_corrupt = False
+        for _, row in loaded_cujs.iterrows():
+            row_id = row['id']
+            if pd.isna(row_id) or not str(row_id).strip():
+                has_corrupt = True
+                try:
+                    # Delete corrupt entry from database
+                    conn = db._get_connection()
+                    cursor = conn.cursor()
+                    if pd.isna(row_id):
+                        cursor.execute("DELETE FROM cujs WHERE id IS NULL OR id = ''")
+                    else:
+                        cursor.execute("DELETE FROM cujs WHERE id = ?", (row_id,))
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    print(f"Could not delete corrupt entry during init: {e}")
+
+        if has_corrupt:
+            # Reload after cleanup
+            loaded_cujs = db.get_cujs()
+
     if loaded_cujs.empty:
         st.session_state.cujs = pd.DataFrame(SAMPLE_CUJS)
         # Save sample data to database
         db.bulk_save_cujs(st.session_state.cujs)
     else:
-        st.session_state.cujs = loaded_cujs
+        # Filter out any remaining corrupt entries before loading into session state
+        clean_cujs = loaded_cujs[
+            loaded_cujs['id'].notna() &
+            (loaded_cujs['id'].astype(str).str.strip() != '')
+        ].copy()
+        st.session_state.cujs = clean_cujs
 
 if "videos" not in st.session_state:
     # Load from database, fall back to sample data
@@ -584,13 +614,14 @@ with tab_cujs:
                     data=csv_data,
                     file_name=f"cujs_export_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
-                    use_container_width=True
+                    width='stretch'
                 )
             else:
                 st.caption("No CUJs to export")
 
     with col2:
         st.markdown("### Critical User Journeys")
+
         # Editable Data Table with proper state management
         edited_df = st.data_editor(
             st.session_state.cujs,
@@ -604,40 +635,93 @@ with tab_cujs:
             key="cuj_editor"
         )
 
-        # Save changes back to session state and database
-        # Use a more robust comparison that handles index differences
+        # Check if there are changes to save
         try:
             # Reset indices for proper comparison
             edited_normalized = edited_df.reset_index(drop=True)
             current_normalized = st.session_state.cujs.reset_index(drop=True)
 
             # Check if dataframes are different (content-wise)
-            is_different = not edited_normalized.equals(current_normalized)
+            has_changes = not edited_normalized.equals(current_normalized)
 
-            if is_different:
-                # Filter out rows with missing required fields before saving
-                valid_rows = edited_df[
-                    edited_df['id'].notna() &
-                    edited_df['task'].notna() &
-                    edited_df['expectation'].notna() &
-                    (edited_df['id'].astype(str).str.strip() != '') &
-                    (edited_df['task'].astype(str).str.strip() != '') &
-                    (edited_df['expectation'].astype(str).str.strip() != '')
-                ].copy()
+            # Show save button if there are changes
+            if has_changes:
+                st.warning("⚠️ You have unsaved changes")
+                col_save, col_discard = st.columns([1, 1])
 
-                # Show warning if any rows were invalid
-                invalid_count = len(edited_df) - len(valid_rows)
-                if invalid_count > 0:
-                    st.warning(f"⚠️ Skipped {invalid_count} row(s) with missing required fields (ID, Task, or Expectation)")
+                with col_save:
+                    if st.button("💾 Save Changes", type="primary", width='stretch'):
+                        # Filter out rows with missing required fields before saving
+                        valid_rows = edited_df[
+                            edited_df['id'].notna() &
+                            edited_df['task'].notna() &
+                            edited_df['expectation'].notna() &
+                            (edited_df['id'].astype(str).str.strip() != '') &
+                            (edited_df['task'].astype(str).str.strip() != '') &
+                            (edited_df['expectation'].astype(str).str.strip() != '')
+                        ].copy()
 
-                # Update session state with valid rows only
-                st.session_state.cujs = valid_rows.reset_index(drop=True)
-                db.bulk_save_cujs(valid_rows)
-                st.success("✅ CUJs saved successfully!")
-                time.sleep(0.5)
-                st.rerun()
+                        # Show warning if any rows were invalid
+                        invalid_count = len(edited_df) - len(valid_rows)
+                        if invalid_count > 0:
+                            st.warning(f"⚠️ Skipped {invalid_count} row(s) with missing required fields (ID, Task, or Expectation)")
+
+                        # Sync deletions: Compare database state with edited state
+                        # Get current CUJs from database (source of truth for what exists)
+                        db_cujs = db.get_cujs()
+
+                        # Check for and clean up corrupt entries with None/empty IDs
+                        corrupt_ids = []
+                        if not db_cujs.empty:
+                            for _, row in db_cujs.iterrows():
+                                row_id = row['id']
+                                if pd.isna(row_id) or not str(row_id).strip():
+                                    corrupt_ids.append(row_id)
+                                    # Delete corrupt entry from database
+                                    try:
+                                        # Use raw SQL since the ID might be NULL
+                                        conn = db._get_connection()
+                                        cursor = conn.cursor()
+                                        if pd.isna(row_id):
+                                            cursor.execute("DELETE FROM cujs WHERE id IS NULL")
+                                        else:
+                                            cursor.execute("DELETE FROM cujs WHERE id = ?", (row_id,))
+                                        conn.commit()
+                                        conn.close()
+                                    except Exception as e:
+                                        st.warning(f"Could not delete corrupt entry: {e}")
+
+                        if corrupt_ids:
+                            st.warning(f"⚠️ Cleaned up {len(corrupt_ids)} corrupt CUJ(s) with missing IDs from database")
+
+                        # Filter out None/NaN IDs and convert to strings
+                        db_ids = set(str(id_val) for id_val in db_cujs['id'].tolist() if pd.notna(id_val) and str(id_val).strip()) if not db_cujs.empty else set()
+                        new_ids = set(str(id_val) for id_val in valid_rows['id'].tolist() if pd.notna(id_val) and str(id_val).strip()) if not valid_rows.empty else set()
+                        deleted_ids = db_ids - new_ids
+
+                        # Delete removed CUJs from database
+                        if deleted_ids:
+                            for deleted_id in deleted_ids:
+                                db.delete_cuj(deleted_id)
+                            st.info(f"🗑️ Deleted {len(deleted_ids)} CUJ(s): {', '.join(sorted(deleted_ids))}")
+
+                        # Update session state with valid rows only
+                        st.session_state.cujs = valid_rows.reset_index(drop=True)
+
+                        # Save/update all CUJs
+                        db.bulk_save_cujs(valid_rows)
+
+                        st.success("✅ CUJs saved successfully!")
+                        time.sleep(0.5)
+                        st.rerun()
+
+                with col_discard:
+                    if st.button("🔄 Discard Changes", width='stretch'):
+                        # Just rerun to reload from session state
+                        st.rerun()
+
         except Exception as e:
-            st.error(f"Error saving CUJs: {e}")
+            st.error(f"Error processing CUJs: {e}")
 
 # --- TAB: VIDEO ASSETS ---
 
@@ -900,7 +984,7 @@ with tab_videos:
                             folder_cols = st.columns(min(len(folders), 4))
                             for idx, folder in enumerate(folders[:8]):  # Show max 8 folders
                                 with folder_cols[idx % 4]:
-                                    if st.button(f"📁 {folder['name']}", key=f"folder_{folder['id']}", use_container_width=True):
+                                    if st.button(f"📁 {folder['name']}", key=f"folder_{folder['id']}", width='stretch'):
                                         st.session_state.drive_current_folder = folder['id']
                                         st.rerun()
 
@@ -1064,11 +1148,11 @@ with tab_videos:
             st.warning(f"⚠️ Delete {len(st.session_state.selected_videos)} selected video(s)? This cannot be undone.")
             col_cancel, col_confirm = st.columns(2)
             with col_cancel:
-                if st.button("Cancel Bulk Delete", key="cancel_bulk", use_container_width=True):
+                if st.button("Cancel Bulk Delete", key="cancel_bulk", width='stretch'):
                     st.session_state.confirm_bulk_delete = False
                     st.rerun()
             with col_confirm:
-                if st.button("Confirm Bulk Delete", key="confirm_bulk", type="secondary", use_container_width=True):
+                if st.button("Confirm Bulk Delete", key="confirm_bulk", type="secondary", width='stretch'):
                     deleted_count = 0
                     for video_id in st.session_state.selected_videos:
                         # Find video row
@@ -1119,11 +1203,11 @@ with tab_videos:
                         st.warning("⚠️ Delete this video? This cannot be undone.")
                         col_cancel, col_confirm = st.columns(2)
                         with col_cancel:
-                            if st.button("Cancel", key=f"cancel_{row['id']}", use_container_width=True):
+                            if st.button("Cancel", key=f"cancel_{row['id']}", width='stretch'):
                                 st.session_state[f"confirm_delete_{row['id']}"] = False
                                 st.rerun()
                         with col_confirm:
-                            if st.button("Confirm Delete", key=f"confirm_{row['id']}", type="secondary", use_container_width=True):
+                            if st.button("Confirm Delete", key=f"confirm_{row['id']}", type="secondary", width='stretch'):
                                 # Delete file if exists
                                 if row.get('file_path'):
                                     delete_video_file(row['file_path'])
@@ -1238,7 +1322,7 @@ with tab_analysis:
         st.markdown("")  # Spacing
 
         # Run Analysis button (PRIMARY ACTION - at top)
-        if st.button("Run Analysis", type="primary", use_container_width=True):
+        if st.button("Run Analysis", type="primary", width='stretch'):
             if not st.session_state.api_key:
                 st.error("Missing API Key")
             elif valid_videos.empty:
@@ -1449,12 +1533,12 @@ with tab_analysis:
 
             col_keep, col_delete = st.columns(2)
             with col_keep:
-                if st.button("Keep Videos", use_container_width=True):
+                if st.button("Keep Videos", width='stretch'):
                     st.session_state.show_cleanup_dialog = False
                     st.rerun()
 
             with col_delete:
-                if st.button("Delete Analyzed Videos", type="secondary", use_container_width=True):
+                if st.button("Delete Analyzed Videos", type="secondary", width='stretch'):
                     # Delete videos that were analyzed
                     videos_to_delete = valid_videos.to_dict('records')
                     deleted_count = 0
@@ -1497,7 +1581,7 @@ with tab_analysis:
                     chart_df['date'] = pd.to_datetime(chart_df['date'])
                     chart_df = chart_df.set_index('date')
 
-                    st.line_chart(chart_df, use_container_width=True)
+                    st.line_chart(chart_df, width='stretch')
                     st.caption(f"Total spend over {len(cost_history)} day(s) with analyses")
                 else:
                     st.caption("No cost data available yet")
@@ -1508,13 +1592,13 @@ with tab_analysis:
         with st.expander("📥 Export"):
             if st.session_state.results:
                 st.markdown("Export results to file")
-                if st.button("Export CSV", use_container_width=True):
+                if st.button("Export CSV", width='stretch'):
                     filepath = db.export_results_to_csv()
                     log_export("CSV", filepath)
                     st.success("✓ Exported to CSV")
                     st.caption(f"`{filepath}`")
 
-                if st.button("Export JSON", use_container_width=True):
+                if st.button("Export JSON", width='stretch'):
                     filepath = db.export_results_to_json()
                     log_export("JSON", filepath)
                     st.success("✓ Exported to JSON")
@@ -1579,7 +1663,7 @@ with tab_analysis:
             st.markdown("")  # Spacing
 
             # Report Generator
-            if st.button("Generate Report", use_container_width=True):
+            if st.button("Generate Report", width='stretch'):
                 with st.spinner("Writing report..."):
                     report_prompt = f"""
                     Write an executive summary markdown report based on these results:
