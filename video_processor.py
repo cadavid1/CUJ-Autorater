@@ -19,9 +19,19 @@ class VideoValidationError(Exception):
     pass
 
 
-def ensure_video_directory():
-    """Create video storage directory if it doesn't exist"""
-    Path(VIDEO_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
+def ensure_video_directory(user_id: Optional[int] = None):
+    """Create video storage directory if it doesn't exist
+
+    Args:
+        user_id: Optional user ID for user-specific directory. If None, creates base directory.
+    """
+    if user_id:
+        # Create user-specific directory
+        user_dir = Path(VIDEO_STORAGE_PATH) / f"user_{user_id}"
+        user_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # Create base directory
+        Path(VIDEO_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
 
 
 def validate_video_format(filename: str) -> Tuple[bool, str]:
@@ -120,18 +130,22 @@ def validate_video_duration(duration_seconds: float) -> Tuple[bool, str]:
     return True, f"Duration OK ({duration_seconds:.1f}s)"
 
 
-def save_uploaded_video(uploaded_file, custom_name: Optional[str] = None) -> str:
+def save_uploaded_video(uploaded_file, user_id: int, custom_name: Optional[str] = None) -> str:
     """
-    Save uploaded video file to local storage
+    Save uploaded video file to user-specific storage
 
     Args:
         uploaded_file: Streamlit UploadedFile object
+        user_id: User ID for user-specific directory
         custom_name: Optional custom filename (without extension)
 
     Returns:
         Path to saved file
     """
-    ensure_video_directory()
+    ensure_video_directory(user_id)
+
+    # Get user-specific directory
+    user_dir = Path(VIDEO_STORAGE_PATH) / f"user_{user_id}"
 
     # Generate filename
     if custom_name:
@@ -140,14 +154,14 @@ def save_uploaded_video(uploaded_file, custom_name: Optional[str] = None) -> str
     else:
         filename = uploaded_file.name
 
-    # Ensure unique filename
-    file_path = Path(VIDEO_STORAGE_PATH) / filename
+    # Ensure unique filename within user's directory
+    file_path = user_dir / filename
     counter = 1
     while file_path.exists():
         stem = Path(filename).stem
         ext = Path(filename).suffix
         filename = f"{stem}_{counter}{ext}"
-        file_path = Path(VIDEO_STORAGE_PATH) / filename
+        file_path = user_dir / filename
         counter += 1
 
     # Save file
@@ -157,12 +171,13 @@ def save_uploaded_video(uploaded_file, custom_name: Optional[str] = None) -> str
     return str(file_path)
 
 
-def validate_and_process_video(uploaded_file) -> Dict:
+def validate_and_process_video(uploaded_file, user_id: int) -> Dict:
     """
     Complete video validation and processing pipeline
 
     Args:
         uploaded_file: Streamlit UploadedFile object
+        user_id: User ID for user-specific directory
 
     Returns:
         Dictionary with validation results and metadata
@@ -195,7 +210,7 @@ def validate_and_process_video(uploaded_file) -> Dict:
 
     # Save file temporarily to extract metadata
     try:
-        file_path = save_uploaded_video(uploaded_file)
+        file_path = save_uploaded_video(uploaded_file, user_id)
         result["file_path"] = file_path
 
         # Extract metadata

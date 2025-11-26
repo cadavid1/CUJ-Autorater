@@ -36,14 +36,29 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # Users table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                full_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP
+            )
+        """)
+
         # CUJs table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS cujs (
                 id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
                 task TEXT NOT NULL,
                 expectation TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
 
@@ -51,6 +66,7 @@ class DatabaseManager:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS videos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 file_path TEXT,
                 drive_id TEXT,
@@ -62,7 +78,8 @@ class DatabaseManager:
                 duration_seconds REAL,
                 file_size_mb REAL,
                 resolution TEXT,
-                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
 
@@ -103,17 +120,22 @@ class DatabaseManager:
             )
         """)
 
-        # Settings table for app configuration
+        # Settings table for app configuration (per-user settings)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
                 value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, key),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
 
         # Migration: Add new columns to existing databases
         self._migrate_analysis_results_table(cursor)
+        self._migrate_to_multiuser(cursor)
 
         conn.commit()
         conn.close()
@@ -143,22 +165,226 @@ class DatabaseManager:
                 except Exception as e:
                     print(f"Migration warning for {column_name}: {e}")
 
-    # === CUJ Operations ===
+    def _migrate_to_multiuser(self, cursor):
+        """Migrate existing single-user database to multi-user structure"""
+        # Check if users table has any users
+        cursor.execute("SELECT COUNT(*) as count FROM users")
+        user_count = cursor.fetchone()[0]
 
-    def save_cuj(self, cuj_id: str, task: str, expectation: str) -> bool:
-        """Save or update a CUJ"""
+        # Check if cujs table has user_id column
+        cursor.execute("PRAGMA table_info(cujs)")
+        cujs_columns = {row[1] for row in cursor.fetchall()}
+
+        if 'user_id' not in cujs_columns:
+            print("Migrating cujs table to multi-user...")
+            # Add user_id column
+            cursor.execute("ALTER TABLE cujs ADD COLUMN user_id INTEGER")
+
+            # Only assign existing data to default user if there are users
+            if user_count > 0:
+                cursor.execute("SELECT id FROM users LIMIT 1")
+                default_user_id = cursor.fetchone()[0]
+                cursor.execute("UPDATE cujs SET user_id = ? WHERE user_id IS NULL", (default_user_id,))
+
+        # Check if videos table has user_id column
+        cursor.execute("PRAGMA table_info(videos)")
+        videos_columns = {row[1] for row in cursor.fetchall()}
+
+        if 'user_id' not in videos_columns:
+            print("Migrating videos table to multi-user...")
+            cursor.execute("ALTER TABLE videos ADD COLUMN user_id INTEGER")
+
+            # Only assign existing data to default user if there are users
+            if user_count > 0:
+                cursor.execute("SELECT id FROM users LIMIT 1")
+                default_user_id = cursor.fetchone()[0]
+                cursor.execute("UPDATE videos SET user_id = ? WHERE user_id IS NULL", (default_user_id,))
+
+        # Migrate settings table to per-user settings
+        cursor.execute("PRAGMA table_info(settings)")
+        settings_columns = {row[1] for row in cursor.fetchall()}
+
+        if 'user_id' not in settings_columns and 'id' not in settings_columns:
+            print("Migrating settings table to multi-user...")
+
+            # Get existing settings before dropping table
+            cursor.execute("SELECT key, value FROM settings")
+            old_settings = cursor.fetchall()
+
+            # Drop and recreate settings table with new schema
+            cursor.execute("DROP TABLE settings")
+            cursor.execute("""
+                CREATE TABLE settings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, key),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Restore settings for default user if there are users
+            if user_count > 0 and old_settings:
+                cursor.execute("SELECT id FROM users LIMIT 1")
+                default_user_id = cursor.fetchone()[0]
+
+                for key, value in old_settings:
+                    cursor.execute("""
+                        INSERT INTO settings (user_id, key, value)
+                        VALUES (?, ?, ?)
+                    """, (default_user_id, key, value))
+
+    # === User Management ===
+
+    def create_user(self, email: str, username: str, password_hash: str, full_name: str = "") -> Optional[int]:
+        """Create a new user and return user ID"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO cujs (id, task, expectation, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO users (email, username, password_hash, full_name)
+                VALUES (?, ?, ?, ?)
+            """, (email, username, password_hash, full_name))
+
+            user_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return user_id
+        except sqlite3.IntegrityError as e:
+            print(f"User creation failed: {e}")
+            return None
+        except Exception as e:
+            print(f"Error creating user: {e}")
+            return None
+
+    def get_user_by_username(self, username: str) -> Optional[Dict]:
+        """Get user by username"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, email, username, password_hash, full_name, created_at, last_login
+                FROM users
+                WHERE username = ?
+            """, (username,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    'id': row['id'],
+                    'email': row['email'],
+                    'username': row['username'],
+                    'password_hash': row['password_hash'],
+                    'full_name': row['full_name'],
+                    'created_at': row['created_at'],
+                    'last_login': row['last_login']
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting user: {e}")
+            return None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        """Get user by email"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, email, username, password_hash, full_name, created_at, last_login
+                FROM users
+                WHERE email = ?
+            """, (email,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    'id': row['id'],
+                    'email': row['email'],
+                    'username': row['username'],
+                    'password_hash': row['password_hash'],
+                    'full_name': row['full_name'],
+                    'created_at': row['created_at'],
+                    'last_login': row['last_login']
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting user: {e}")
+            return None
+
+    def update_last_login(self, user_id: int) -> bool:
+        """Update user's last login timestamp"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE users
+                SET last_login = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (user_id,))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error updating last login: {e}")
+            return False
+
+    def get_all_users(self) -> List[Dict]:
+        """Get all users (admin function)"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, email, username, full_name, created_at, last_login
+                FROM users
+                ORDER BY created_at DESC
+            """)
+
+            users = []
+            for row in cursor.fetchall():
+                users.append({
+                    'id': row['id'],
+                    'email': row['email'],
+                    'username': row['username'],
+                    'full_name': row['full_name'],
+                    'created_at': row['created_at'],
+                    'last_login': row['last_login']
+                })
+
+            conn.close()
+            return users
+        except Exception as e:
+            print(f"Error getting all users: {e}")
+            return []
+
+    # === CUJ Operations ===
+
+    def save_cuj(self, user_id: int, cuj_id: str, task: str, expectation: str) -> bool:
+        """Save or update a CUJ for a specific user"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO cujs (id, user_id, task, expectation, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     task = excluded.task,
                     expectation = excluded.expectation,
                     updated_at = CURRENT_TIMESTAMP
-            """, (cuj_id, task, expectation))
+                WHERE user_id = ?
+            """, (cuj_id, user_id, task, expectation, user_id))
 
             conn.commit()
             conn.close()
@@ -167,19 +393,23 @@ class DatabaseManager:
             print(f"Error saving CUJ: {e}")
             return False
 
-    def get_cujs(self) -> pd.DataFrame:
-        """Get all CUJs as DataFrame"""
+    def get_cujs(self, user_id: int) -> pd.DataFrame:
+        """Get all CUJs for a specific user as DataFrame"""
         conn = self._get_connection()
-        df = pd.read_sql_query("SELECT id, task, expectation FROM cujs ORDER BY created_at", conn)
+        df = pd.read_sql_query(
+            "SELECT id, task, expectation FROM cujs WHERE user_id = ? ORDER BY created_at",
+            conn,
+            params=(user_id,)
+        )
         conn.close()
         return df
 
-    def delete_cuj(self, cuj_id: str) -> bool:
-        """Delete a CUJ"""
+    def delete_cuj(self, user_id: int, cuj_id: str) -> bool:
+        """Delete a CUJ for a specific user"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM cujs WHERE id = ?", (cuj_id,))
+            cursor.execute("DELETE FROM cujs WHERE id = ? AND user_id = ?", (cuj_id, user_id))
             conn.commit()
             conn.close()
             return True
@@ -187,8 +417,8 @@ class DatabaseManager:
             print(f"Error deleting CUJ: {e}")
             return False
 
-    def bulk_save_cujs(self, cujs_df: pd.DataFrame) -> bool:
-        """Bulk save CUJs from DataFrame"""
+    def bulk_save_cujs(self, user_id: int, cujs_df: pd.DataFrame) -> bool:
+        """Bulk save CUJs from DataFrame for a specific user"""
         try:
             saved_count = 0
             skipped_count = 0
@@ -208,7 +438,7 @@ class DatabaseManager:
                     skipped_count += 1
                     continue
 
-                self.save_cuj(str(cuj_id).strip(), str(task).strip(), str(expectation).strip())
+                self.save_cuj(user_id, str(cuj_id).strip(), str(task).strip(), str(expectation).strip())
                 saved_count += 1
 
             if skipped_count > 0:
@@ -221,18 +451,18 @@ class DatabaseManager:
 
     # === Video Operations ===
 
-    def save_video(self, name: str, file_path: str, duration_seconds: float,
+    def save_video(self, user_id: int, name: str, file_path: str, duration_seconds: float,
                    file_size_mb: float, resolution: str = "", description: str = "") -> int:
-        """Save video metadata and return video ID"""
+        """Save video metadata for a specific user and return video ID"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO videos (name, file_path, status, description,
+                INSERT INTO videos (user_id, name, file_path, status, description,
                                   duration_seconds, file_size_mb, resolution, source)
-                VALUES (?, ?, 'ready', ?, ?, ?, ?, 'local')
-            """, (name, file_path, description, duration_seconds, file_size_mb, resolution))
+                VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, 'local')
+            """, (user_id, name, file_path, description, duration_seconds, file_size_mb, resolution))
 
             video_id = cursor.lastrowid
             conn.commit()
@@ -242,20 +472,20 @@ class DatabaseManager:
             print(f"Error saving video: {e}")
             return -1
 
-    def save_drive_video(self, name: str, drive_file_id: str, drive_web_link: str,
+    def save_drive_video(self, user_id: int, name: str, drive_file_id: str, drive_web_link: str,
                         file_path: str, duration_seconds: float, file_size_mb: float,
                         resolution: str = "", description: str = "") -> int:
-        """Save Drive video metadata and return video ID"""
+        """Save Drive video metadata for a specific user and return video ID"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO videos (name, file_path, drive_file_id, drive_web_link,
+                INSERT INTO videos (user_id, name, file_path, drive_file_id, drive_web_link,
                                   source, status, description, duration_seconds,
                                   file_size_mb, resolution)
-                VALUES (?, ?, ?, ?, 'drive', 'ready', ?, ?, ?, ?)
-            """, (name, file_path, drive_file_id, drive_web_link, description,
+                VALUES (?, ?, ?, ?, ?, 'drive', 'ready', ?, ?, ?, ?)
+            """, (user_id, name, file_path, drive_file_id, drive_web_link, description,
                   duration_seconds, file_size_mb, resolution))
 
             video_id = cursor.lastrowid
@@ -266,25 +496,26 @@ class DatabaseManager:
             print(f"Error saving Drive video: {e}")
             return -1
 
-    def get_videos(self) -> pd.DataFrame:
-        """Get all videos as DataFrame"""
+    def get_videos(self, user_id: int) -> pd.DataFrame:
+        """Get all videos for a specific user as DataFrame"""
         conn = self._get_connection()
         df = pd.read_sql_query("""
             SELECT id, name, file_path, status, description,
                    duration_seconds as duration, file_size_mb as size_mb,
                    resolution, uploaded_at
             FROM videos
+            WHERE user_id = ?
             ORDER BY uploaded_at DESC
-        """, conn)
+        """, conn, params=(user_id,))
         conn.close()
         return df
 
-    def delete_video(self, video_id: int) -> bool:
-        """Delete a video"""
+    def delete_video(self, user_id: int, video_id: int) -> bool:
+        """Delete a video for a specific user"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM videos WHERE id = ?", (video_id,))
+            cursor.execute("DELETE FROM videos WHERE id = ? AND user_id = ?", (video_id, user_id))
             conn.commit()
             conn.close()
             return True
@@ -338,8 +569,8 @@ class DatabaseManager:
             print(f"Error saving analysis: {e}")
             return -1
 
-    def get_analysis_results(self, limit: Optional[int] = None) -> pd.DataFrame:
-        """Get analysis results as DataFrame"""
+    def get_analysis_results(self, user_id: int, limit: Optional[int] = None) -> pd.DataFrame:
+        """Get analysis results for a specific user as DataFrame"""
         conn = self._get_connection()
 
         query = """
@@ -366,22 +597,23 @@ class DatabaseManager:
             FROM analysis_results ar
             JOIN cujs c ON ar.cuj_id = c.id
             JOIN videos v ON ar.video_id = v.id
+            WHERE c.user_id = ?
             ORDER BY ar.analyzed_at DESC
         """
 
         if limit:
             query += f" LIMIT {limit}"
 
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query, conn, params=(user_id,))
         conn.close()
         return df
 
-    def get_latest_results(self) -> Dict:
-        """Get latest analysis results as dictionary keyed by CUJ ID"""
+    def get_latest_results(self, user_id: int) -> Dict:
+        """Get latest analysis results for a specific user as dictionary keyed by CUJ ID"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Get most recent analysis for each CUJ
+        # Get most recent analysis for each CUJ belonging to the user
         cursor.execute("""
             SELECT
                 ar.id,
@@ -403,12 +635,15 @@ class DatabaseManager:
                 ar.human_notes
             FROM analysis_results ar
             JOIN videos v ON ar.video_id = v.id
-            WHERE ar.id IN (
-                SELECT MAX(id)
-                FROM analysis_results
-                GROUP BY cuj_id
+            JOIN cujs c ON ar.cuj_id = c.id
+            WHERE c.user_id = ? AND ar.id IN (
+                SELECT MAX(ar2.id)
+                FROM analysis_results ar2
+                JOIN cujs c2 ON ar2.cuj_id = c2.id
+                WHERE c2.user_id = ?
+                GROUP BY ar2.cuj_id
             )
-        """)
+        """, (user_id, user_id))
 
         results = {}
         for row in cursor.fetchall():
@@ -559,19 +794,19 @@ class DatabaseManager:
 
     # === Settings Management ===
 
-    def save_setting(self, key: str, value: str) -> bool:
-        """Save a setting"""
+    def save_setting(self, user_id: int, key: str, value: str) -> bool:
+        """Save a setting for a specific user"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO settings (key, value, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET
+                INSERT INTO settings (user_id, key, value, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, key) DO UPDATE SET
                     value = excluded.value,
                     updated_at = CURRENT_TIMESTAMP
-            """, (key, value))
+            """, (user_id, key, value))
 
             conn.commit()
             conn.close()
@@ -580,13 +815,13 @@ class DatabaseManager:
             print(f"Error saving setting: {e}")
             return False
 
-    def get_setting(self, key: str, default: str = None) -> Optional[str]:
-        """Get a setting value"""
+    def get_setting(self, user_id: int, key: str, default: str = None) -> Optional[str]:
+        """Get a setting value for a specific user"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            cursor.execute("SELECT value FROM settings WHERE user_id = ? AND key = ?", (user_id, key))
             row = cursor.fetchone()
 
             conn.close()
@@ -597,16 +832,16 @@ class DatabaseManager:
 
     # === Statistics ===
 
-    def get_statistics(self) -> Dict:
-        """Get overall statistics"""
+    def get_statistics(self, user_id: int) -> Dict:
+        """Get statistics for a specific user"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Total counts
-        cursor.execute("SELECT COUNT(*) as count FROM cujs")
+        # Total counts for this user
+        cursor.execute("SELECT COUNT(*) as count FROM cujs WHERE user_id = ?", (user_id,))
         total_cujs = cursor.fetchone()['count']
 
-        cursor.execute("SELECT COUNT(*) as count FROM videos")
+        cursor.execute("SELECT COUNT(*) as count FROM videos WHERE user_id = ?", (user_id,))
         total_videos = cursor.fetchone()['count']
 
         cursor.execute("""
@@ -614,35 +849,39 @@ class DatabaseManager:
             FROM analysis_results ar
             JOIN cujs c ON ar.cuj_id = c.id
             JOIN videos v ON ar.video_id = v.id
-        """)
+            WHERE c.user_id = ?
+        """, (user_id,))
         total_analyses = cursor.fetchone()['count']
 
-        # Total cost (only for existing CUJs/videos)
+        # Total cost (only for this user's analyses)
         cursor.execute("""
             SELECT SUM(ar.cost) as total
             FROM analysis_results ar
             JOIN cujs c ON ar.cuj_id = c.id
             JOIN videos v ON ar.video_id = v.id
-        """)
+            WHERE c.user_id = ?
+        """, (user_id,))
         total_cost = cursor.fetchone()['total'] or 0.0
 
-        # Average friction score (only for existing CUJs/videos)
+        # Average friction score (only for this user)
         cursor.execute("""
             SELECT AVG(ar.friction_score) as avg
             FROM analysis_results ar
             JOIN cujs c ON ar.cuj_id = c.id
             JOIN videos v ON ar.video_id = v.id
-        """)
+            WHERE c.user_id = ?
+        """, (user_id,))
         avg_friction = cursor.fetchone()['avg'] or 0.0
 
-        # Pass/Fail/Partial counts (only for existing CUJs/videos)
+        # Pass/Fail/Partial counts (only for this user)
         cursor.execute("""
             SELECT ar.status, COUNT(*) as count
             FROM analysis_results ar
             JOIN cujs c ON ar.cuj_id = c.id
             JOIN videos v ON ar.video_id = v.id
+            WHERE c.user_id = ?
             GROUP BY ar.status
-        """)
+        """, (user_id,))
         status_counts = {row['status']: row['count'] for row in cursor.fetchall()}
 
         conn.close()
@@ -656,10 +895,11 @@ class DatabaseManager:
             'status_counts': status_counts
         }
 
-    def get_cost_history(self, days: int = 30) -> List[Dict]:
-        """Get daily cost aggregations for charting
+    def get_cost_history(self, user_id: int, days: int = 30) -> List[Dict]:
+        """Get daily cost aggregations for a specific user for charting
 
         Args:
+            user_id: User ID to filter by
             days: Number of days to look back (default 30)
 
         Returns:
@@ -670,13 +910,14 @@ class DatabaseManager:
 
         cursor.execute("""
             SELECT
-                DATE(analyzed_at) as date,
-                SUM(cost) as daily_cost
-            FROM analysis_results
-            WHERE analyzed_at >= DATE('now', '-' || ? || ' days')
-            GROUP BY DATE(analyzed_at)
+                DATE(ar.analyzed_at) as date,
+                SUM(ar.cost) as daily_cost
+            FROM analysis_results ar
+            JOIN cujs c ON ar.cuj_id = c.id
+            WHERE c.user_id = ? AND ar.analyzed_at >= DATE('now', '-' || ? || ' days')
+            GROUP BY DATE(ar.analyzed_at)
             ORDER BY date ASC
-        """, (days,))
+        """, (user_id, days))
 
         results = cursor.fetchall()
         conn.close()

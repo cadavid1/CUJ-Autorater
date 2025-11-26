@@ -16,6 +16,7 @@ from video_processor import (
 )
 from gemini_client import GeminiClient, GeminiAPIError, call_gemini_text
 from storage import get_db
+from auth import get_auth
 from logger import (log_video_upload, log_analysis_start,
                     log_analysis_complete, log_analysis_error, log_export)
 
@@ -32,6 +33,16 @@ except ImportError:
 
 # --- CONFIGURATION & STATE ---
 st.set_page_config(page_title="UXR CUJ Analysis", page_icon="🧪", layout="wide")
+
+# Initialize authentication
+auth = get_auth()
+
+# Require authentication - show login/register if not logged in
+if not auth.require_auth():
+    st.stop()  # Stop execution if not authenticated
+
+# Get current user ID for data isolation
+user_id = auth.get_current_user_id()
 
 # Ensure data directories exist
 ensure_video_directory()
@@ -56,7 +67,7 @@ SAMPLE_VIDEOS = [
 # Initialize Session State
 if "cujs" not in st.session_state:
     # Load from database, fall back to sample data
-    loaded_cujs = db.get_cujs()
+    loaded_cujs = db.get_cujs(user_id)
 
     # Clean up any corrupt entries with None/empty IDs before loading
     if not loaded_cujs.empty:
@@ -70,9 +81,9 @@ if "cujs" not in st.session_state:
                     conn = db._get_connection()
                     cursor = conn.cursor()
                     if pd.isna(row_id):
-                        cursor.execute("DELETE FROM cujs WHERE id IS NULL OR id = ''")
+                        cursor.execute("DELETE FROM cujs WHERE id IS NULL OR id = '' AND user_id = ?", (user_id,))
                     else:
-                        cursor.execute("DELETE FROM cujs WHERE id = ?", (row_id,))
+                        cursor.execute("DELETE FROM cujs WHERE id = ? AND user_id = ?", (row_id, user_id))
                     conn.commit()
                     conn.close()
                 except Exception as e:
@@ -80,12 +91,12 @@ if "cujs" not in st.session_state:
 
         if has_corrupt:
             # Reload after cleanup
-            loaded_cujs = db.get_cujs()
+            loaded_cujs = db.get_cujs(user_id)
 
     if loaded_cujs.empty:
         st.session_state.cujs = pd.DataFrame(SAMPLE_CUJS)
         # Save sample data to database
-        db.bulk_save_cujs(st.session_state.cujs)
+        db.bulk_save_cujs(user_id, st.session_state.cujs)
     else:
         # Filter out any remaining corrupt entries before loading into session state
         clean_cujs = loaded_cujs[
@@ -96,7 +107,7 @@ if "cujs" not in st.session_state:
 
 if "videos" not in st.session_state:
     # Load from database, fall back to sample data
-    loaded_videos = db.get_videos()
+    loaded_videos = db.get_videos(user_id)
     if loaded_videos.empty:
         st.session_state.videos = pd.DataFrame(SAMPLE_VIDEOS)
     else:
@@ -104,11 +115,11 @@ if "videos" not in st.session_state:
 
 if "results" not in st.session_state:
     # Load latest results from database
-    st.session_state.results = db.get_latest_results()
+    st.session_state.results = db.get_latest_results(user_id)
 
 if "api_key" not in st.session_state:
     # Load from database settings
-    saved_key = db.get_setting("api_key", "")
+    saved_key = db.get_setting(user_id, "api_key", "")
     st.session_state.api_key = saved_key
 
 if "system_prompt" not in st.session_state:
@@ -116,8 +127,8 @@ if "system_prompt" not in st.session_state:
 
 if "selected_model" not in st.session_state:
     # Load from database settings - check for custom default first, then fall back to DEFAULT_MODEL
-    user_default = db.get_setting("default_model", DEFAULT_MODEL)
-    saved_model = db.get_setting("selected_model", user_default)
+    user_default = db.get_setting(user_id, "default_model", DEFAULT_MODEL)
+    saved_model = db.get_setting(user_id, "selected_model", user_default)
     st.session_state.selected_model = saved_model
 
 if "db_synced" not in st.session_state:
@@ -165,7 +176,7 @@ def get_friction_label(friction_score):
 def check_first_time_user():
     """Show welcome message for first-time users"""
     if 'welcome_shown' not in st.session_state:
-        stats = db.get_statistics()
+        stats = db.get_statistics(user_id)
         is_first_time = (
             stats['total_analyses'] == 0 and
             not st.session_state.api_key
@@ -231,8 +242,10 @@ def call_gemini(api_key, model_name, prompt, system_instruction, response_mime_t
 
 st.sidebar.title("🧪 UXR CUJ Analysis")
 st.sidebar.markdown("Powered by Gemini")
-st.sidebar.warning("⚠️ This application is currently under development and not private. Don't test with any production data (run locally for privacy). Ask David Pearl if unsure how to get this deployed.")
 st.sidebar.markdown("---")
+
+# Show user info in sidebar
+auth.show_user_info_sidebar()
 
 # Workflow Progress Stepper
 render_progress_stepper()
@@ -328,7 +341,7 @@ with tab_home:
         ])
         st.metric("📹 Videos", valid_video_count_home)
     with col3:
-        stats_home = db.get_statistics()
+        stats_home = db.get_statistics(user_id)
         st.metric("🔬 Analyses", stats_home['total_analyses'])
     with col4:
         st.metric("💰 Total Cost", format_cost(stats_home['total_cost']))
@@ -386,7 +399,7 @@ with tab_home:
         st.markdown("### 📊 Recent Activity")
 
         # Show recent analyses
-        recent_df = db.get_analysis_results(limit=5)
+        recent_df = db.get_analysis_results(user_id, limit=5)
         if not recent_df.empty:
             for _, row in recent_df.iterrows():
                 status_emoji = "✅" if row['status'] == "Pass" else "❌" if row['status'] == "Fail" else "⚠️"
@@ -431,7 +444,7 @@ with tab_setup:
         if new_api_key != st.session_state.api_key:
             st.session_state.api_key = new_api_key
             if new_api_key:  # Only save non-empty keys
-                db.save_setting("api_key", new_api_key)
+                db.save_setting(user_id, "api_key", new_api_key)
 
         # Get model list from config
         model_ids = get_model_list()
@@ -458,7 +471,7 @@ with tab_setup:
         # Save model if changed
         if new_model != st.session_state.selected_model:
             st.session_state.selected_model = new_model
-            db.save_setting("selected_model", new_model)
+            db.save_setting(user_id, "selected_model", new_model)
 
         # Show model info
         model_info = get_model_info(st.session_state.selected_model)
@@ -473,7 +486,7 @@ with tab_setup:
 
         # Default model preference
         st.markdown("---")
-        current_default = db.get_setting("default_model", DEFAULT_MODEL)
+        current_default = db.get_setting(user_id, "default_model", DEFAULT_MODEL)
         current_default_info = get_model_info(current_default)
 
         col1, col2 = st.columns([2, 1])
@@ -482,7 +495,7 @@ with tab_setup:
         with col2:
             if st.session_state.selected_model != current_default:
                 if st.button("Set as Default", key="set_default_btn"):
-                    db.save_setting("default_model", st.session_state.selected_model)
+                    db.save_setting(user_id, "default_model", st.session_state.selected_model)
                     st.success(f"Default model updated to {model_info['display_name']}")
                     st.rerun()
             else:
@@ -568,7 +581,7 @@ with tab_cujs:
                             else:
                                 st.session_state.cujs = pd.concat([st.session_state.cujs, new_df], ignore_index=True)
                             # Save to database
-                            db.bulk_save_cujs(new_df)
+                            db.bulk_save_cujs(user_id, new_df)
                             st.rerun()
 
         st.markdown("")
@@ -598,7 +611,7 @@ with tab_cujs:
                                     imported_df[['id', 'task', 'expectation']]
                                 ], ignore_index=True)
 
-                            db.bulk_save_cujs(imported_df)
+                            db.bulk_save_cujs(user_id, imported_df)
                             st.success(f"Imported {len(imported_df)} CUJs!")
                             st.rerun()
                 except Exception as e:
@@ -668,7 +681,7 @@ with tab_cujs:
 
                         # Sync deletions: Compare database state with edited state
                         # Get current CUJs from database (source of truth for what exists)
-                        db_cujs = db.get_cujs()
+                        db_cujs = db.get_cujs(user_id)
 
                         # Check for and clean up corrupt entries with None/empty IDs
                         corrupt_ids = []
@@ -702,14 +715,14 @@ with tab_cujs:
                         # Delete removed CUJs from database
                         if deleted_ids:
                             for deleted_id in deleted_ids:
-                                db.delete_cuj(deleted_id)
+                                db.delete_cuj(user_id, deleted_id)
                             st.info(f"🗑️ Deleted {len(deleted_ids)} CUJ(s): {', '.join(sorted(deleted_ids))}")
 
                         # Update session state with valid rows only
                         st.session_state.cujs = valid_rows.reset_index(drop=True)
 
                         # Save/update all CUJs
-                        db.bulk_save_cujs(valid_rows)
+                        db.bulk_save_cujs(user_id, valid_rows)
 
                         st.success("✅ CUJs saved successfully!")
                         time.sleep(0.5)
@@ -801,11 +814,12 @@ with tab_videos:
                     for uploaded_file, file_id in files_to_process:
                         with st.spinner(f"Processing {uploaded_file.name}..."):
                             # Validate and process video
-                            result = validate_and_process_video(uploaded_file)
+                            result = validate_and_process_video(uploaded_file, user_id)
 
                         if result["valid"]:
                             # Save to database first
                             video_id = db.save_video(
+                                user_id=user_id,
                                 name=uploaded_file.name,
                                 file_path=result["file_path"],
                                 duration_seconds=result["metadata"].get("duration_seconds"),
@@ -1074,6 +1088,7 @@ with tab_videos:
 
                                             # Save to database
                                             video_id = db.save_drive_video(
+                                                user_id=user_id,
                                                 name=file['name'],
                                                 drive_file_id=file['id'],
                                                 drive_web_link=file.get('webViewLink', ''),
@@ -1171,7 +1186,7 @@ with tab_videos:
                                 delete_video_file(file_path)
 
                             # Delete from database
-                            db.delete_video(video_id)
+                            db.delete_video(user_id, video_id)
 
                             # Remove from dataframe
                             st.session_state.videos = st.session_state.videos[
@@ -1226,7 +1241,7 @@ with tab_videos:
                                     delete_video_file(row['file_path'])
 
                                 # Delete from database
-                                db.delete_video(row['id'])
+                                db.delete_video(user_id, row['id'])
 
                                 # Remove from dataframe
                                 st.session_state.videos = st.session_state.videos[
@@ -1300,7 +1315,7 @@ with tab_analysis:
         else:
             st.metric("Analyses Complete", 0)
     with col_s4:
-        stats = db.get_statistics()
+        stats = db.get_statistics(user_id)
         st.metric("Total Spent", format_cost(stats['total_cost']))
 
     st.markdown("---")
@@ -1558,7 +1573,7 @@ with tab_analysis:
 
         # Statistics (detailed breakdown)
         with st.expander("📊 Statistics"):
-            stats = db.get_statistics()
+            stats = db.get_statistics(user_id)
             if stats['total_analyses'] > 0:
                 st.metric("Total Analyses", stats['total_analyses'])
                 st.metric("Total Cost", format_cost(stats['total_cost']))
@@ -1574,7 +1589,7 @@ with tab_analysis:
                 st.markdown("")  # Spacing
                 st.markdown("**📈 Cost Trend (Last 30 Days)**")
 
-                cost_history = db.get_cost_history(days=30)
+                cost_history = db.get_cost_history(user_id, days=30)
                 if cost_history:
                     # Convert to pandas DataFrame for charting
                     import pandas as pd
@@ -1637,7 +1652,7 @@ with tab_analysis:
 
         # Analysis History
         with st.expander("📜 History"):
-            history_df = db.get_analysis_results(limit=20)
+            history_df = db.get_analysis_results(user_id, limit=20)
             if not history_df.empty:
                 st.dataframe(
                     history_df[[
