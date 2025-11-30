@@ -5,6 +5,7 @@ Handles user registration, login, and session management
 
 import streamlit as st
 import bcrypt
+import uuid
 from storage import get_db
 from typing import Optional, Tuple
 
@@ -97,6 +98,27 @@ class AuthManager:
 
         return True, f"Welcome back, {user['username']}!"
 
+    def demo_login(self) -> Tuple[bool, str]:
+        """
+        Create a demo session with unique ID
+        Demo users get full functionality but no data persistence
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        # Generate unique demo session ID
+        demo_session_id = f"demo_{uuid.uuid4().hex[:8]}"
+
+        # Set session state for demo mode
+        st.session_state.authenticated = True
+        st.session_state.is_demo_mode = True
+        st.session_state.user_id = demo_session_id
+        st.session_state.username = "Demo User"
+        st.session_state.user_email = "demo@example.com"
+        st.session_state.user_full_name = "Demo User"
+
+        return True, "Welcome to the demo! Your data will not be saved."
+
     def logout(self):
         """Log out the current user and clear all user-specific data"""
         # Clear authentication
@@ -133,6 +155,10 @@ class AuthManager:
         """Check if user is authenticated"""
         return st.session_state.get('authenticated', False)
 
+    def is_demo_mode(self) -> bool:
+        """Check if current session is in demo mode"""
+        return st.session_state.get('is_demo_mode', False)
+
     def get_current_user_id(self) -> Optional[int]:
         """Get the current user's ID"""
         return st.session_state.get('user_id')
@@ -160,6 +186,16 @@ class AuthManager:
         # Header
         st.title("🧪 UXR CUJ Analysis")
         st.markdown("**AI-Powered User Journey Analysis**")
+        st.markdown("---")
+
+        # Demo mode button (prominent placement)
+        st.info("👋 **New here?** Try the app without creating an account")
+        if st.button("🎭 Try Demo Mode", type="primary", use_container_width=True):
+            success, message = self.demo_login()
+            if success:
+                st.success(message)
+                st.rerun()
+
         st.markdown("---")
 
         # Tab selection

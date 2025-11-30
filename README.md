@@ -2,11 +2,13 @@
 
 An intelligent tool for analyzing user session videos against Critical User Journeys (CUJs) using Google's Gemini AI models.
 
-**Version:** 2.0.0
+**Version:** 2.2.0
 **Status:** Development/POC (Use locally for privacy)
 
 ## Features
 
+- 🎭 **Demo Mode**: Try the app without creating an account - full functionality with no data persistence
+- 🔐 **Multi-User Support**: User authentication with isolated data per account
 - 🎥 **Real Video Analysis**: Upload and analyze actual user session videos with Gemini AI
 - 📁 **Google Drive Integration**: Import videos directly from Drive, export results to Drive
 - 📋 **CUJ Management**: Define and manage Critical User Journeys
@@ -18,7 +20,23 @@ An intelligent tool for analyzing user session videos against Critical User Jour
 - 📊 **Results Dashboard**: View comprehensive analysis results with executive reports
 - ✨ **Latest Gemini Models**: 7 models including Gemini 3 Pro Preview and 2.5 Flash-Lite
 
-## Latest Updates (Sprints 1-5 Complete!)
+## Latest Updates (Sprints 1-7 Complete!)
+
+### Sprint 7: Authentication & Demo Mode ✨ (Latest!)
+- 🎭 **Demo Mode**: Click "Try Demo Mode" on login to test without account creation
+  - Full app functionality with no registration required
+  - Unique session IDs for isolated multi-user demo testing
+  - Automatic data cleanup on browser close (no persistence)
+  - Usage limits: max 2 CUJs, 10 videos per demo session
+  - Conversion prompt to create account and keep data
+- 🔐 **User Authentication System**:
+  - Secure bcrypt password hashing
+  - Email optional for registration
+  - Session-based authentication with data isolation per user
+  - Full user profile management (username, email, full name)
+- 👥 **Multi-User Data Isolation**: Each user has private access to their own CUJs, videos, and analysis results
+- 🚪 **Logout with Data Clearing**: Secure session cleanup prevents data leakage between users
+- 💾 **Per-User Persistence**: API keys, model preferences, and all data saved per account
 
 ### Sprint 1: Foundation ✅
 - 🎥 **Real Video Processing**: Upload videos (mp4, mov, avi, webm) up to 900MB and 90 minutes
@@ -136,12 +154,39 @@ pip install -r requirements.txt
 
 ## Usage
 
+### 🎭 Quick Start with Demo Mode (No Account Needed!)
+
+**Try the app instantly without creating an account:**
+
 1. **Start the application:**
 ```bash
 streamlit run app.py
 ```
 
-2. **🏠 Home Dashboard** (First stop):
+2. **Click "Try Demo Mode"** on the login screen
+   - Get full app functionality immediately
+   - No email or password required
+   - Data is temporary and clears when you close the browser
+   - Usage limits: max 2 CUJs and 10 videos per demo session
+   - Click "Create Account" banner anytime to save your work
+
+**Ready to keep your data?** Create a free account to save everything permanently!
+
+---
+
+### 📋 Full Account Setup & Usage
+
+1. **Start the application:**
+```bash
+streamlit run app.py
+```
+
+2. **Create an account or login:**
+   - **New users**: Click "Register" tab and create your account
+   - **Returning users**: Use "Login" tab with your credentials
+   - **Quick demo**: Click "Try Demo Mode" to test without signup
+
+3. **🏠 Home Dashboard** (First stop):
    - View quick stats: CUJs defined, videos uploaded, analyses complete, total cost
    - Check system readiness with color-coded status indicators
    - See recent activity and analysis history
@@ -233,14 +278,15 @@ For longer videos (e.g., 30 minutes):
 
 ```
 CUJ-Autorater/
-├── app.py                       # Main Streamlit application (1,096 lines)
+├── app.py                       # Main Streamlit application (1,900+ lines)
+├── auth.py                      # Authentication & demo mode manager (248 lines)
 ├── config.py                    # Configuration & model settings (184 lines)
 ├── storage.py                   # Database layer with SQLite (653 lines)
 ├── gemini_client.py             # Gemini API wrapper with retry logic (286 lines)
 ├── video_processor.py           # Video validation & OpenCV processing (292 lines)
 ├── drive_client.py              # Google Drive API client with OAuth (426 lines)
 ├── logger.py                    # Centralized logging system (83 lines)
-├── requirements.txt             # Python dependencies (14 packages)
+├── requirements.txt             # Python dependencies (15 packages)
 ├── README.md                    # This file (comprehensive documentation)
 ├── CHANGELOG.md                 # Version history and sprint tracking
 ├── SPRINT5_IMPLEMENTATION.md    # Drive integration technical guide
@@ -266,12 +312,13 @@ CUJ-Autorater/
 - **Supported formats**: mp4, mov, avi, webm, mkv, flv
 
 ### Database Schema
-The SQLite database (`data/uxr_mate.db`) contains 5 tables:
-- **cujs**: Critical User Journeys (id, task, expectation)
-- **videos**: Video metadata (file_path, duration, size, resolution, drive info)
+The SQLite database (`data/uxr_mate.db`) contains 6 tables:
+- **users**: User accounts with authentication (username, email, password_hash, full_name)
+- **cujs**: Critical User Journeys per user (id, task, expectation, user_id)
+- **videos**: Video metadata per user (file_path, duration, size, resolution, drive info, user_id)
 - **analysis_results**: AI analysis results with human verification fields
 - **sessions**: Batch tracking (future feature)
-- **settings**: App preferences (API key, model selection)
+- **settings**: App preferences per user (API key, model selection, user_id)
 
 **Note**: Schema migrations run automatically on startup for backward compatibility.
 
@@ -363,8 +410,8 @@ Automatic exponential backoff protects against transient failures:
 
 ## Roadmap
 
-### ✅ Completed (v1.0.0 - v2.1.0)
-**Sprint 1-6 Complete:**
+### ✅ Completed (v1.0.0 - v2.2.0)
+**Sprint 1-7 Complete:**
 - ✅ Real video upload and analysis
 - ✅ 7 Gemini models (3 Pro, 2.5 Pro, 2.5 Flash, 2.0 Flash variants)
 - ✅ Progress tracking with multi-stage indicators
@@ -389,6 +436,10 @@ Automatic exponential backoff protects against transient failures:
 - ✅ Custom indigo theme
 - ✅ Improved result scannability with compact headers
 - ✅ Empty states with helpful guidance
+- ✅ Demo mode with session isolation and usage limits
+- ✅ User authentication system with bcrypt password hashing
+- ✅ Multi-user support with per-user data isolation
+- ✅ Account creation and login workflow
 
 ### 🎯 Future Enhancements
 **High Priority:**
@@ -396,18 +447,19 @@ Automatic exponential backoff protects against transient failures:
 - Export results to Google Drive (UI integration)
 - Session tracking for batch analysis
 - Encrypted API key storage
+- Password reset/recovery workflow
 
 **Medium Priority:**
 - Video thumbnails for quick preview
 - Batch analysis pause/resume
 - Export to PDF with charts
-- Multi-user support with authentication
 - API rate limit dashboard
+- Email verification for accounts
+- Role-based access control (admin, reviewer, viewer)
 
 **Low Priority:**
 - Video editing/trimming before analysis
 - Collaborative review with comments
-- Integration with Jira/Notion for CUJ import
 - Custom model fine-tuning
 
 ## Privacy & Security
@@ -415,19 +467,24 @@ Automatic exponential backoff protects against transient failures:
 **⚠️ Important:** This application is currently in development and not designed for production use with sensitive data.
 
 ### Current Status
-- Local deployment recommended
-- No encryption for API keys (stored in database)
-- OAuth tokens in session state (temporary, not persisted)
-- Logs may contain video filenames and analysis text
+- ✅ User authentication with bcrypt password hashing
+- ✅ Per-user data isolation (each user sees only their data)
+- ✅ Session-based authentication
+- ✅ Demo mode with no data persistence
+- ⚠️ Local deployment recommended
+- ⚠️ No encryption for API keys (stored in database per user)
+- ⚠️ OAuth tokens in session state (temporary, not persisted)
+- ⚠️ Logs may contain video filenames and analysis text
 
 ### For Production Use
 Before deploying with real user data, implement:
-1. Encrypted storage for API keys and OAuth tokens
-2. Multi-user authentication and authorization
-3. Role-based access control (RBAC)
+1. Encrypted storage for API keys and OAuth tokens (in progress)
+2. HTTPS deployment with proper certificate management
+3. Role-based access control (RBAC) for team collaboration
 4. Audit logging with user attribution
 5. Data retention and deletion policies
-6. HTTPS deployment with proper certificate management
+6. Email verification and password reset workflows
+7. Rate limiting and brute-force protection
 
 ### Data Storage
 All data is stored locally:
@@ -466,9 +523,8 @@ MIT License - feel free to use and modify for your needs.
 For issues or questions:
 1. Check the [Troubleshooting](#troubleshooting) section above
 2. Review the [Gemini API documentation](https://ai.google.dev/docs)
-3. See [SPRINT5_IMPLEMENTATION.md](SPRINT5_IMPLEMENTATION.md) for Drive setup
-4. Check logs in `data/logs/` for error details
-5. Open an issue on GitHub or contact the maintainer
+3. Check logs in `data/logs/` for error details
+4. Open an issue on GitHub or contact the maintainer
 
 ## Acknowledgments
 
@@ -492,10 +548,12 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Then configure your Gemini API key in the System Setup page.
+**First time?** Click "Try Demo Mode" on the login screen to test immediately (no signup needed)!
+
+**Want to keep your data?** Create a free account, then configure your Gemini API key in System Setup.
 
 ---
 
-**Version**: 2.1.0 | **Last Updated**: January 2025 | **Status**: Active Development
+**Version**: 2.2.0 | **Last Updated**: November 2025 | **Status**: Active Development
 
-**Note**: This tool requires a valid Gemini API key. Video analysis costs vary based on model selection and video duration. Always review cost estimates before processing large batches. Supports videos up to 900MB and 90 minutes in length. For privacy, use local deployment only.
+**Note**: This tool now supports multi-user authentication and demo mode! Try it without creating an account by clicking "Try Demo Mode" on the login screen. For full functionality and data persistence, create a free account. Video analysis requires a valid Gemini API key. Costs vary based on model selection and video duration. Supports videos up to 900MB and 90 minutes. For privacy, use local deployment only.

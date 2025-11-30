@@ -49,6 +49,19 @@ if not auth.require_auth():
 # Get current user ID for data isolation
 user_id = auth.get_current_user_id()
 
+# Demo mode banner
+if auth.is_demo_mode():
+    demo_banner = st.container()
+    with demo_banner:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.warning("🎭 **Demo Mode** - You're trying out the app! Your data will NOT be saved after this session ends.")
+        with col2:
+            if st.button("Create Account", type="primary", use_container_width=True):
+                # Clear demo session and show registration
+                auth.logout()
+                st.rerun()
+
 # Ensure data directories exist
 ensure_video_directory()
 
@@ -57,8 +70,11 @@ db = get_db()
 
 # Initialize Session State
 if "cujs" not in st.session_state:
-    # Load from database
-    loaded_cujs = db.get_cujs(user_id)
+    # Load from database (skip for demo users)
+    if auth.is_demo_mode():
+        loaded_cujs = pd.DataFrame()
+    else:
+        loaded_cujs = db.get_cujs(user_id)
 
     # Clean up any corrupt entries with None/empty IDs before loading
     if not loaded_cujs.empty:
@@ -96,8 +112,11 @@ if "cujs" not in st.session_state:
         st.session_state.cujs = clean_cujs
 
 if "videos" not in st.session_state:
-    # Load from database
-    loaded_videos = db.get_videos(user_id)
+    # Load from database (skip for demo users)
+    if auth.is_demo_mode():
+        loaded_videos = pd.DataFrame()
+    else:
+        loaded_videos = db.get_videos(user_id)
     if loaded_videos.empty:
         # Start with empty dataframe - don't populate with sample data
         st.session_state.videos = pd.DataFrame(columns=['id', 'name', 'status', 'file_path', 'duration', 'size_mb', 'description'])
@@ -105,21 +124,31 @@ if "videos" not in st.session_state:
         st.session_state.videos = loaded_videos
 
 if "results" not in st.session_state:
-    # Load latest results from database
-    st.session_state.results = db.get_latest_results(user_id)
+    # Load latest results from database (skip for demo users)
+    if auth.is_demo_mode():
+        st.session_state.results = {}
+    else:
+        st.session_state.results = db.get_latest_results(user_id)
 
 if "api_key" not in st.session_state:
-    # Load from database settings
-    saved_key = db.get_setting(user_id, "api_key", "")
+    # Load from database settings (skip for demo users)
+    if auth.is_demo_mode():
+        saved_key = ""
+    else:
+        saved_key = db.get_setting(user_id, "api_key", "")
     st.session_state.api_key = saved_key
 
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = DEFAULT_SYSTEM_PROMPT
 
 if "selected_model" not in st.session_state:
-    # Load from database settings - check for custom default first, then fall back to DEFAULT_MODEL
-    user_default = db.get_setting(user_id, "default_model", DEFAULT_MODEL)
-    saved_model = db.get_setting(user_id, "selected_model", user_default)
+    # Load from database settings (skip for demo users)
+    if auth.is_demo_mode():
+        saved_model = DEFAULT_MODEL
+    else:
+        # Check for custom default first, then fall back to DEFAULT_MODEL
+        user_default = db.get_setting(user_id, "default_model", DEFAULT_MODEL)
+        saved_model = db.get_setting(user_id, "selected_model", user_default)
     st.session_state.selected_model = saved_model
 
 if "db_synced" not in st.session_state:
@@ -434,7 +463,7 @@ with tab_setup:
         # Save API key if changed
         if new_api_key != st.session_state.api_key:
             st.session_state.api_key = new_api_key
-            if new_api_key:  # Only save non-empty keys
+            if new_api_key and not auth.is_demo_mode():  # Only save non-empty keys for non-demo users
                 db.save_setting(user_id, "api_key", new_api_key)
 
         # Get model list from config
@@ -462,7 +491,8 @@ with tab_setup:
         # Save model if changed
         if new_model != st.session_state.selected_model:
             st.session_state.selected_model = new_model
-            db.save_setting(user_id, "selected_model", new_model)
+            if not auth.is_demo_mode():
+                db.save_setting(user_id, "selected_model", new_model)
 
         # Show model info
         model_info = get_model_info(st.session_state.selected_model)
@@ -486,7 +516,8 @@ with tab_setup:
         with col2:
             if st.session_state.selected_model != current_default:
                 if st.button("Set as Default", key="set_default_btn"):
-                    db.save_setting(user_id, "default_model", st.session_state.selected_model)
+                    if not auth.is_demo_mode():
+                        db.save_setting(user_id, "default_model", st.session_state.selected_model)
                     st.success(f"Default model updated to {model_info['display_name']}")
                     st.rerun()
             else:
@@ -564,6 +595,8 @@ with tab_cujs:
             if st.button("Generate CUJs"):
                 if not st.session_state.api_key:
                     st.error("API Key required")
+                elif auth.is_demo_mode() and len(st.session_state.cujs) >= 2:
+                    st.error("Demo mode limit: Maximum 2 CUJs. Create an account for unlimited access!")
                 else:
                     with st.spinner("Brainstorming..."):
                         prompt = f"""Generate 4 distinct Critical User Journeys (CUJs) for testing: "{topic}". 
@@ -580,12 +613,22 @@ with tab_cujs:
                         if new_data:
                             # Append new data
                             new_df = pd.DataFrame(new_data)
+
+                            # Apply demo mode limit
+                            if auth.is_demo_mode():
+                                current_count = len(st.session_state.cujs)
+                                available_slots = max(0, 2 - current_count)
+                                if available_slots < len(new_df):
+                                    new_df = new_df.head(available_slots)
+                                    st.warning(f"Demo mode limit: Only added {available_slots} CUJ(s) to stay within 2 total limit")
+
                             if st.session_state.cujs.empty:
                                 st.session_state.cujs = new_df
                             else:
                                 st.session_state.cujs = pd.concat([st.session_state.cujs, new_df], ignore_index=True)
-                            # Save to database
-                            db.bulk_save_cujs(user_id, new_df)
+                            # Save to database (skip for demo users)
+                            if not auth.is_demo_mode():
+                                db.bulk_save_cujs(user_id, new_df)
                             st.rerun()
 
         st.markdown("")
@@ -607,16 +650,28 @@ with tab_cujs:
                     else:
                         st.success(f"Found {len(imported_df)} CUJs")
                         if st.button("Import CUJs", type="primary"):
+                            import_df = imported_df[['id', 'task', 'expectation']]
+
+                            # Apply demo mode limit
+                            if auth.is_demo_mode():
+                                current_count = len(st.session_state.cujs)
+                                available_slots = max(0, 2 - current_count)
+                                if len(import_df) > available_slots:
+                                    import_df = import_df.head(available_slots)
+                                    st.warning(f"Demo mode limit: Only imported {available_slots} CUJ(s) to stay within 2 total limit")
+
                             if st.session_state.cujs.empty:
-                                st.session_state.cujs = imported_df[['id', 'task', 'expectation']]
+                                st.session_state.cujs = import_df
                             else:
                                 st.session_state.cujs = pd.concat([
                                     st.session_state.cujs,
-                                    imported_df[['id', 'task', 'expectation']]
+                                    import_df
                                 ], ignore_index=True)
 
-                            db.bulk_save_cujs(user_id, imported_df)
-                            st.success(f"Imported {len(imported_df)} CUJs!")
+                            # Save to database (skip for demo users)
+                            if not auth.is_demo_mode():
+                                db.bulk_save_cujs(user_id, import_df)
+                            st.success(f"Imported {len(import_df)} CUJs!")
                             st.rerun()
                 except Exception as e:
                     st.error(f"Import failed: {e}")
@@ -678,6 +733,11 @@ with tab_cujs:
                             (edited_df['expectation'].astype(str).str.strip() != '')
                         ].copy()
 
+                        # Apply demo mode limit
+                        if auth.is_demo_mode() and len(valid_rows) > 2:
+                            valid_rows = valid_rows.head(2)
+                            st.warning(f"⚠️ Demo mode limit: Only kept first 2 CUJs. Create an account for unlimited access!")
+
                         # Show warning if any rows were invalid
                         invalid_count = len(edited_df) - len(valid_rows)
                         if invalid_count > 0:
@@ -716,8 +776,8 @@ with tab_cujs:
                         new_ids = set(str(id_val) for id_val in valid_rows['id'].tolist() if pd.notna(id_val) and str(id_val).strip()) if not valid_rows.empty else set()
                         deleted_ids = db_ids - new_ids
 
-                        # Delete removed CUJs from database
-                        if deleted_ids:
+                        # Delete removed CUJs from database (skip for demo users)
+                        if deleted_ids and not auth.is_demo_mode():
                             for deleted_id in deleted_ids:
                                 db.delete_cuj(user_id, deleted_id)
                             st.info(f"🗑️ Deleted {len(deleted_ids)} CUJ(s): {', '.join(sorted(deleted_ids))}")
@@ -725,8 +785,9 @@ with tab_cujs:
                         # Update session state with valid rows only
                         st.session_state.cujs = valid_rows.reset_index(drop=True)
 
-                        # Save/update all CUJs
-                        db.bulk_save_cujs(user_id, valid_rows)
+                        # Save/update all CUJs (skip for demo users)
+                        if not auth.is_demo_mode():
+                            db.bulk_save_cujs(user_id, valid_rows)
 
                         st.success("✅ CUJs saved successfully!")
                         time.sleep(0.5)
@@ -799,6 +860,17 @@ with tab_videos:
         )
 
         if uploaded_files:
+            # Check demo mode limit
+            if auth.is_demo_mode():
+                current_video_count = len(st.session_state.videos)
+                if current_video_count >= 10:
+                    st.error("Demo mode limit: Maximum 10 videos. Create an account for unlimited access!")
+                    uploaded_files = []
+                elif current_video_count + len(uploaded_files) > 10:
+                    available_slots = 10 - current_video_count
+                    st.warning(f"Demo mode limit: Only processing first {available_slots} video(s) to stay within 10 total limit")
+                    uploaded_files = uploaded_files[:available_slots]
+
             # Track processed files in session state to avoid duplicates
             if "processed_files" not in st.session_state:
                 st.session_state.processed_files = set()
@@ -821,16 +893,21 @@ with tab_videos:
                             result = validate_and_process_video(uploaded_file, user_id)
 
                         if result["valid"]:
-                            # Save to database first
-                            video_id = db.save_video(
-                                user_id=user_id,
-                                name=uploaded_file.name,
-                                file_path=result["file_path"],
-                                duration_seconds=result["metadata"].get("duration_seconds"),
-                                file_size_mb=result["metadata"].get("file_size_mb"),
-                                resolution=result["metadata"]["resolution"],
-                                description=f"Duration: {format_duration(result['metadata']['duration_seconds'])}, Resolution: {result['metadata']['resolution']}"
-                            )
+                            # Save to database (skip for demo users)
+                            if auth.is_demo_mode():
+                                # Generate unique ID for demo mode (not saved to DB)
+                                import time
+                                video_id = f"demo_video_{int(time.time() * 1000)}"
+                            else:
+                                video_id = db.save_video(
+                                    user_id=user_id,
+                                    name=uploaded_file.name,
+                                    file_path=result["file_path"],
+                                    duration_seconds=result["metadata"].get("duration_seconds"),
+                                    file_size_mb=result["metadata"].get("file_size_mb"),
+                                    resolution=result["metadata"]["resolution"],
+                                    description=f"Duration: {format_duration(result['metadata']['duration_seconds'])}, Resolution: {result['metadata']['resolution']}"
+                                )
 
                             # Add to videos dataframe
                             new_entry = {
@@ -1063,72 +1140,81 @@ with tab_videos:
 
                                 with col3:
                                     if st.button("Import", key=f"import_{file['id']}", type="primary", width='stretch'):
-                                        try:
-                                            # Create destination path
-                                            from config import DRIVE_VIDEO_STORAGE_PATH
-                                            Path(DRIVE_VIDEO_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
-                                            dest_path = Path(DRIVE_VIDEO_STORAGE_PATH) / file['name']
+                                        # Check demo mode limit
+                                        if auth.is_demo_mode() and len(st.session_state.videos) >= 10:
+                                            st.error("Demo mode limit: Maximum 10 videos. Create an account for unlimited access!")
+                                        else:
+                                            try:
+                                                # Create destination path
+                                                from config import DRIVE_VIDEO_STORAGE_PATH
+                                                Path(DRIVE_VIDEO_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
+                                                dest_path = Path(DRIVE_VIDEO_STORAGE_PATH) / file['name']
 
-                                            # Download with progress
-                                            progress_bar = st.progress(0)
-                                            status_text = st.empty()
+                                                # Download with progress
+                                                progress_bar = st.progress(0)
+                                                status_text = st.empty()
 
-                                            def update_progress(percent):
-                                                progress_bar.progress(percent / 100)
-                                                status_text.text(f"Downloading: {percent}%")
+                                                def update_progress(percent):
+                                                    progress_bar.progress(percent / 100)
+                                                    status_text.text(f"Downloading: {percent}%")
 
-                                            drive_client.download_file(
-                                                file['id'],
-                                                str(dest_path),
-                                                progress_callback=update_progress
-                                            )
+                                                drive_client.download_file(
+                                                    file['id'],
+                                                    str(dest_path),
+                                                    progress_callback=update_progress
+                                                )
 
-                                            progress_bar.progress(100)
-                                            status_text.text("Extracting metadata...")
+                                                progress_bar.progress(100)
+                                                status_text.text("Extracting metadata...")
 
-                                            # Extract video metadata
-                                            from video_processor import extract_video_metadata
-                                            metadata = extract_video_metadata(str(dest_path))
+                                                # Extract video metadata
+                                                from video_processor import extract_video_metadata
+                                                metadata = extract_video_metadata(str(dest_path))
 
-                                            # Save to database
-                                            video_id = db.save_drive_video(
-                                                user_id=user_id,
-                                                name=file['name'],
-                                                drive_file_id=file['id'],
-                                                drive_web_link=file.get('webViewLink', ''),
-                                                file_path=str(dest_path),
-                                                duration_seconds=metadata['duration_seconds'],
-                                                file_size_mb=size_mb,
-                                                resolution=metadata['resolution'],
-                                                description=f"Imported from Drive - Duration: {format_duration(metadata['duration_seconds'])}, Resolution: {metadata['resolution']}"
-                                            )
+                                                # Save to database (skip for demo users)
+                                                if auth.is_demo_mode():
+                                                    # Generate unique ID for demo mode (not saved to DB)
+                                                    import time
+                                                    video_id = f"demo_video_{int(time.time() * 1000)}"
+                                                else:
+                                                    video_id = db.save_drive_video(
+                                                        user_id=user_id,
+                                                        name=file['name'],
+                                                        drive_file_id=file['id'],
+                                                        drive_web_link=file.get('webViewLink', ''),
+                                                        file_path=str(dest_path),
+                                                        duration_seconds=metadata['duration_seconds'],
+                                                        file_size_mb=size_mb,
+                                                        resolution=metadata['resolution'],
+                                                        description=f"Imported from Drive - Duration: {format_duration(metadata['duration_seconds'])}, Resolution: {metadata['resolution']}"
+                                                    )
 
-                                            # Add to session state
-                                            new_entry = {
-                                                "id": video_id,
-                                                "name": file['name'],
-                                                "status": "Ready",
-                                                "file_path": str(dest_path),
-                                                "duration": metadata['duration_seconds'],
-                                                "size_mb": size_mb,
-                                                "description": f"From Drive - {format_duration(metadata['duration_seconds'])}, {metadata['resolution']}"
-                                            }
+                                                # Add to session state
+                                                new_entry = {
+                                                    "id": video_id,
+                                                    "name": file['name'],
+                                                    "status": "Ready",
+                                                    "file_path": str(dest_path),
+                                                    "duration": metadata['duration_seconds'],
+                                                    "size_mb": size_mb,
+                                                    "description": f"From Drive - {format_duration(metadata['duration_seconds'])}, {metadata['resolution']}"
+                                                }
 
-                                            new_df = pd.DataFrame([new_entry])
-                                            if st.session_state.videos.empty:
-                                                st.session_state.videos = new_df
-                                            else:
-                                                st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
+                                                new_df = pd.DataFrame([new_entry])
+                                                if st.session_state.videos.empty:
+                                                    st.session_state.videos = new_df
+                                                else:
+                                                    st.session_state.videos = pd.concat([st.session_state.videos, new_df], ignore_index=True)
 
-                                            # Log import
-                                            log_video_upload(file['name'], size_mb, metadata['duration_seconds'])
+                                                # Log import
+                                                log_video_upload(file['name'], size_mb, metadata['duration_seconds'])
 
-                                            st.success(f"✅ Imported {file['name']} from Drive!")
-                                            time.sleep(1)
-                                            st.rerun()
+                                                st.success(f"✅ Imported {file['name']} from Drive!")
+                                                time.sleep(1)
+                                                st.rerun()
 
-                                        except Exception as e:
-                                            st.error(f"Import failed: {str(e)}")
+                                            except Exception as e:
+                                                st.error(f"Import failed: {str(e)}")
 
                     else:
                         st.info("No videos found in your Drive. Upload videos to Drive first.")
@@ -1189,8 +1275,9 @@ with tab_videos:
                             if file_path:
                                 delete_video_file(file_path)
 
-                            # Delete from database
-                            db.delete_video(user_id, video_id)
+                            # Delete from database (skip for demo users)
+                            if not auth.is_demo_mode():
+                                db.delete_video(user_id, video_id)
 
                             # Remove from dataframe
                             st.session_state.videos = st.session_state.videos[
@@ -1244,8 +1331,9 @@ with tab_videos:
                                 if row.get('file_path'):
                                     delete_video_file(row['file_path'])
 
-                                # Delete from database
-                                db.delete_video(user_id, row['id'])
+                                # Delete from database (skip for demo users)
+                                if not auth.is_demo_mode():
+                                    db.delete_video(user_id, row['id'])
 
                                 # Remove from dataframe
                                 st.session_state.videos = st.session_state.videos[
@@ -1485,20 +1573,21 @@ with tab_analysis:
                             else:
                                 key_moments = None
 
-                            # Save to database
-                            db.save_analysis(
-                                cuj_id=cuj['id'],
-                                video_id=video['id'],
-                                model_used=st.session_state.selected_model,
-                                status=analysis['status'],
-                                friction_score=analysis['friction_score'],
-                                observation=analysis['observation'],
-                                recommendation=analysis.get('recommendation', ''),
-                                cost=cost_info['total_cost'],
-                                raw_response=json.dumps(analysis),
-                                confidence_score=confidence_score,
-                                key_moments=key_moments
-                            )
+                            # Save to database (skip for demo users)
+                            if not auth.is_demo_mode():
+                                db.save_analysis(
+                                    cuj_id=cuj['id'],
+                                    video_id=video['id'],
+                                    model_used=st.session_state.selected_model,
+                                    status=analysis['status'],
+                                    friction_score=analysis['friction_score'],
+                                    observation=analysis['observation'],
+                                    recommendation=analysis.get('recommendation', ''),
+                                    cost=cost_info['total_cost'],
+                                    raw_response=json.dumps(analysis),
+                                    confidence_score=confidence_score,
+                                    key_moments=key_moments
+                                )
 
                             results_buffer[cuj['id']] = analysis
 
@@ -1884,30 +1973,33 @@ with tab_analysis:
                                 final_status = None if override_status == "Keep AI" else override_status
                                 final_friction = None if override_friction == "Keep AI" else int(override_friction)
 
-                                # Save verification
-                                if 'analysis_id' in res:
+                                # Save verification (skip for demo users)
+                                if 'analysis_id' in res and not auth.is_demo_mode():
                                     success = db.verify_analysis(
                                         res['analysis_id'],
                                         override_status=final_status,
                                         override_friction=final_friction,
                                         notes=notes
                                     )
+                                else:
+                                    # For demo mode, just mark as successful without DB save
+                                    success = True
 
-                                    if success:
-                                        # Update session state so the expander auto-collapses on rerun
-                                        st.session_state.results[cuj_id]['human_verified'] = True
-                                        if final_status:
-                                            st.session_state.results[cuj_id]['human_override_status'] = final_status
-                                        if final_friction:
-                                            st.session_state.results[cuj_id]['human_override_friction'] = final_friction
-                                        if notes:
-                                            st.session_state.results[cuj_id]['human_notes'] = notes
+                                if success:
+                                    # Update session state so the expander auto-collapses on rerun
+                                    st.session_state.results[cuj_id]['human_verified'] = True
+                                    if final_status:
+                                        st.session_state.results[cuj_id]['human_override_status'] = final_status
+                                    if final_friction:
+                                        st.session_state.results[cuj_id]['human_override_friction'] = final_friction
+                                    if notes:
+                                        st.session_state.results[cuj_id]['human_notes'] = notes
 
-                                        st.success("✅ Verification saved!")
-                                        time.sleep(1)
-                                        st.rerun()
-                                    else:
-                                        st.error("Failed to save verification")
+                                    st.success("✅ Verification saved!")
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to save verification")
                     else:
                         # Show override info if present
                         if res.get('human_override_status') or res.get('human_override_friction'):
